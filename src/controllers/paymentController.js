@@ -17,24 +17,45 @@ export const createOrder = asyncHandler(async (req, res) => {
   }
 
   try {
+    // Generate short receipt (max 40 chars as per Razorpay requirement) - matching original
+    const timestamp = Date.now().toString().slice(-10); // Last 10 digits
+    const shortId = (surveyResultId || '').substring(0, 15); // First 15 chars of ID
+    const receipt = `rcpt_${shortId}_${timestamp}`.substring(0, 40); // Ensure max 40 chars
+
     const options = {
       amount: Math.round(amount * 100), // Convert to paise
       currency: 'INR',
-      receipt: `survey_${surveyResultId || Date.now()}`,
+      receipt: receipt,
       notes: {
         survey_result_id: surveyResultId,
-        village,
-        survey_number: surveyNumber,
-        promo_code: promoCode
+        village: village || '',
+        survey_number: surveyNumber || '',
+        promo_code: promoCode || null
       }
     };
 
     const order = await razorpay.orders.create(options);
 
+    // Save payment record with 'pending' status (matching original)
+    await Payment.create({
+      user_id: userId,
+      survey_result_id: surveyResultId || null,
+      razorpay_order_id: order.id,
+      amount: amount,
+      original_amount: 699, // Default original amount
+      discount_amount: 699 - amount,
+      promo_code: promoCode || null,
+      payment_status: 'pending',
+      village: village || '',
+      survey_number: surveyNumber || ''
+    });
+
     res.json({
       data: {
         success: true,
         order_id: order.id,
+        amount: order.amount,
+        currency: order.currency,
         key_id: process.env.RAZORPAY_KEY_ID
       }
     });
@@ -73,30 +94,41 @@ export const verifyPayment = asyncHandler(async (req, res) => {
       });
     }
 
-    // Get order details to extract metadata
-    const order = await razorpay.orders.fetch(razorpay_order_id);
-    const notes = order.notes || {};
-
-    // Calculate amounts
-    const amount = order.amount / 100; // Convert from paise
-    const originalAmount = notes.original_amount || amount;
-    const discountAmount = originalAmount - amount;
-
-    // Create payment record (in-memory, no DB table)
-    await Payment.create({
-      user_id: userId,
-      survey_result_id: notes.survey_result_id || null,
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      amount,
-      original_amount: originalAmount,
-      discount_amount: discountAmount,
-      promo_code: notes.promo_code || null,
-      payment_status: 'completed',
-      village: notes.village || null,
-      survey_number: notes.survey_number || null
+    // Find existing payment record by razorpay_order_id (matching original)
+    const payments = await Payment.filter({
+      razorpay_order_id: razorpay_order_id
     });
+
+    if (payments.length > 0) {
+      // Update existing payment record (matching original)
+      await Payment.update(payments[0].id, {
+        razorpay_payment_id: razorpay_payment_id,
+        razorpay_signature: razorpay_signature,
+        payment_status: 'completed'
+      });
+    } else {
+      // Fallback: Get order details and create new record if not found
+      const order = await razorpay.orders.fetch(razorpay_order_id);
+      const notes = order.notes || {};
+      const amount = order.amount / 100; // Convert from paise
+      const originalAmount = notes.original_amount || amount;
+      const discountAmount = originalAmount - amount;
+
+      await Payment.create({
+        user_id: userId,
+        survey_result_id: notes.survey_result_id || null,
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+        amount,
+        original_amount: originalAmount,
+        discount_amount: discountAmount,
+        promo_code: notes.promo_code || null,
+        payment_status: 'completed',
+        village: notes.village || null,
+        survey_number: notes.survey_number || null
+      });
+    }
 
     res.json({
       data: {

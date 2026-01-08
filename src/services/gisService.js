@@ -3,11 +3,18 @@ import pool from '../config/database.js';
 /**
  * GIS Analysis Service
  * Analyzes survey locations using PostGIS and calculates:
- * - POIs within 10-minute walking radius (800m)
+ * - POIs within 10-minute walking radius (Mapbox Isochrone API with 1000m fallback)
  * - Distances to nearest police, hospital, main road
  * - Development score based on amenities
  * - FTL zone percentage (tank overlap)
+ * 
+ * Based on original Base44 analyzeSurvey function
  */
+
+const ISO_MINUTES = 10;
+const DENOISE = 1;
+const FALLBACK_WALK_BUFFER_M = 1000;
+const SUPPORTIVE_CATEGORIES = ["Retail", "Health And Medical", "Accommodation"];
 
 class GISService {
   /**
@@ -20,278 +27,269 @@ class GISService {
     try {
       console.log(`🔍 Analyzing location: ${village}, Survey #${surveyNumber}`);
 
-      // Step 1: Get coordinates from ts_warangal_survey
+      // Step 1: Get coordinates from ts_warangal_survey_centroids (matching original)
       const surveyResult = await pool.query(
-        `SELECT gid, surveyno, village, geom,
-                ST_X(ST_Centroid(geom)) as longitude,
-                ST_Y(ST_Centroid(geom)) as latitude
-         FROM ts_warangal_survey
+        `SELECT 
+                ST_X(geom) as longitude,
+                ST_Y(geom) as latitude,
+                ST_AsGeoJSON(geom) as geom_json
+         FROM ts_warangal_survey_centroids
          WHERE village = $1 AND surveyno = $2
          LIMIT 1`,
         [village, surveyNumber]
       );
 
       if (surveyResult.rows.length === 0) {
-        return { error: `Survey not found: ${village} - ${surveyNumber}` };
+        return { error: `No matching survey centroid found. Check village and survey number.` };
       }
 
       const survey = surveyResult.rows[0];
       const latitude = parseFloat(survey.latitude);
       const longitude = parseFloat(survey.longitude);
 
-      console.log(`📍 Coordinates: ${latitude}, ${longitude}`);
+      console.log(`📍 Survey location: ${latitude}, ${longitude}`);
 
-      // Step 2: Create 10-minute walking radius (800 meters)
-      const walkingRadiusMeters = 800; // 10 minutes at 4.8 km/h
-      const isochroneResult = await pool.query(
-        `SELECT ST_AsGeoJSON(
-          ST_Buffer(
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            $3
-          )::geometry
-        ) as isochrone_geom`,
-        [longitude, latitude, walkingRadiusMeters]
-      );
+      // Step 2: Get isochrone using Mapbox API (matching original)
+      const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
+      let isoGeometry;
+      let usedFallback = false;
 
-      const isochroneGeometry = JSON.parse(isochroneResult.rows[0].isochrone_geom);
-      const isochroneGeom = isochroneResult.rows[0].isochrone_geom;
-
-      // Step 3: Find POIs within radius
-      // Using ts_overture_poi_3 table (POI data)
-      const poiResult = await pool.query(
-        `SELECT 
-          category,
-          type,
-          name,
-          ST_X(ST_Centroid(geom)) as lon,
-          ST_Y(ST_Centroid(geom)) as lat,
-          ST_Distance(
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            geom::geography
-          ) as distance_m
-         FROM ts_overture_poi_3
-         WHERE ST_DWithin(
-           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-           geom::geography,
-           $3
-         )
-         ORDER BY distance_m
-         LIMIT 500`,
-        [longitude, latitude, walkingRadiusMeters]
-      );
-
-      // Step 4: Process POI data
-      const poiBreakdown = {};
-      const poiLocations = {};
-      const supportiveBusinesses = {
-        'Retail': 0,
-        'Health': 0,
-        'Accommodation': 0
-      };
-
-      poiResult.rows.forEach(poi => {
-        const category = poi.category || 'Other';
-        const type = poi.type || 'Unknown';
+      try {
+        const isoUrl = `https://api.mapbox.com/isochrone/v1/mapbox/walking/${longitude},${latitude}?contours_minutes=${ISO_MINUTES}&polygons=true&denoise=${DENOISE}&access_token=${MAPBOX_TOKEN}`;
+        const isoResponse = await fetch(isoUrl);
         
-        // Count by category
-        if (!poiBreakdown[category]) {
-          poiBreakdown[category] = 0;
+        if (!isoResponse.ok) throw new Error('Mapbox API error');
+        
+        const isoData = await isoResponse.json();
+        if (isoData.features && isoData.features.length > 0) {
+          isoGeometry = isoData.features[0].geometry;
+        } else {
+          throw new Error('No isochrone data returned');
         }
-        poiBreakdown[category]++;
-
-        // Group by category for map display
-        if (!poiLocations[category]) {
-          poiLocations[category] = [];
-        }
-        poiLocations[category].push({
-          name: poi.name || `${category} - ${type}`,
-          lat: parseFloat(poi.lat),
-          lon: parseFloat(poi.lon),
-          type: type,
-          distance_m: Math.round(parseFloat(poi.distance_m))
-        });
-
-        // Count supportive businesses
-        const categoryLower = category.toLowerCase();
-        if (categoryLower.includes('shop') || categoryLower.includes('store') || 
-            categoryLower.includes('market') || categoryLower.includes('retail')) {
-          supportiveBusinesses['Retail']++;
-        } else if (categoryLower.includes('hospital') || categoryLower.includes('clinic') || 
-                   categoryLower.includes('pharmacy') || categoryLower.includes('health')) {
-          supportiveBusinesses['Health']++;
-        } else if (categoryLower.includes('hotel') || categoryLower.includes('lodging') || 
-                   categoryLower.includes('accommodation')) {
-          supportiveBusinesses['Accommodation']++;
-        }
-      });
-
-      // Convert poiBreakdown to array format
-      const poiBreakdownArray = Object.entries(poiBreakdown)
-        .map(([category, count]) => ({ category, count }))
-        .sort((a, b) => b.count - a.count);
-
-      // Convert poiLocations to array format for map
-      const poiLocationsArray = Object.entries(poiLocations)
-        .map(([category, locations]) => ({
-          category,
-          locations: locations.slice(0, 100) // Limit to 100 per category for performance
-        }));
-
-      // Convert supportive businesses to array
-      const supportiveBusinessesArray = Object.entries(supportiveBusinesses)
-        .filter(([_, count]) => count > 0)
-        .map(([category, count]) => ({ category, count }));
-
-      const totalPOIs = poiResult.rows.length;
-
-      // Step 5: Find nearest police station
-      const policeResult = await pool.query(
-        `SELECT 
-          name,
-          ST_X(ST_Centroid(geom)) as lon,
-          ST_Y(ST_Centroid(geom)) as lat,
-          ST_Distance(
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            geom::geography
-          ) as distance_m
-         FROM ts_policestations
-         ORDER BY ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography <-> geom::geography
-         LIMIT 1`,
-        [longitude, latitude]
-      );
-
-      const nearestPolice = policeResult.rows.length > 0 ? {
-        name: policeResult.rows[0].name || 'Police Station',
-        lat: parseFloat(policeResult.rows[0].lat),
-        lon: parseFloat(policeResult.rows[0].lon),
-        distance_m: Math.round(parseFloat(policeResult.rows[0].distance_m))
-      } : null;
-
-      // Step 6: Find nearest hospital
-      const hospitalResult = await pool.query(
-        `SELECT 
-          name,
-          ST_X(ST_Centroid(geom)) as lon,
-          ST_Y(ST_Centroid(geom)) as lat,
-          ST_Distance(
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            geom::geography
-          ) as distance_m
-         FROM ts_hospitals
-         ORDER BY ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography <-> geom::geography
-         LIMIT 1`,
-        [longitude, latitude]
-      );
-
-      const nearestHospital = hospitalResult.rows.length > 0 ? {
-        name: hospitalResult.rows[0].name || 'Hospital',
-        lat: parseFloat(hospitalResult.rows[0].lat),
-        lon: parseFloat(hospitalResult.rows[0].lon),
-        distance_m: Math.round(parseFloat(hospitalResult.rows[0].distance_m))
-      } : null;
-
-      // Step 7: Find nearest main road
-      const roadResult = await pool.query(
-        `SELECT 
-          name,
-          fclass,
-          ST_X(ST_ClosestPoint(geom, ST_SetSRID(ST_MakePoint($1, $2), 4326))) as lon,
-          ST_Y(ST_ClosestPoint(geom, ST_SetSRID(ST_MakePoint($1, $2), 4326))) as lat,
-          ST_Distance(
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            geom::geography
-          ) as distance_m
-         FROM ts_main_roads
-         ORDER BY ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography <-> geom::geography
-         LIMIT 1`,
-        [longitude, latitude]
-      );
-
-      const nearestRoad = roadResult.rows.length > 0 ? {
-        name: roadResult.rows[0].name || roadResult.rows[0].fclass || 'Main Road',
-        lat: parseFloat(roadResult.rows[0].lat),
-        lon: parseFloat(roadResult.rows[0].lon),
-        distance_m: Math.round(parseFloat(roadResult.rows[0].distance_m))
-      } : null;
-
-      // Step 8: Calculate FTL zone percentage (tank overlap)
-      // Use the survey geometry directly from the query result
-      const tankResult = await pool.query(
-        `SELECT 
-          ST_Area(
-            ST_Intersection(
-              (SELECT geom FROM ts_warangal_survey WHERE village = $1 AND surveyno = $2 LIMIT 1)::geography,
-              ts_tanks.geom::geography
+      } catch (error) {
+        console.log(`Mapbox failed: ${error.message}. Using ${FALLBACK_WALK_BUFFER_M}m buffer fallback.`);
+        usedFallback = true;
+        
+        // Fallback to 1000m buffer (matching original)
+        const bufferResult = await pool.query(
+          `SELECT ST_AsGeoJSON(
+            ST_Transform(
+              ST_Buffer(
+                ST_Transform(geom, 32643),
+                $1
+              ),
+              4326
             )
-          ) as intersection_area,
-          ST_Area((SELECT geom FROM ts_warangal_survey WHERE village = $1 AND surveyno = $2 LIMIT 1)::geography) as survey_area
-         FROM ts_tanks
-         WHERE ST_Intersects(
-           (SELECT geom FROM ts_warangal_survey WHERE village = $1 AND surveyno = $2 LIMIT 1)::geography,
-           ts_tanks.geom::geography
-         )`,
-        [village, surveyNumber]
-      );
-
-      let ftlZonePercentage = 0;
-      if (tankResult.rows.length > 0 && tankResult.rows[0].survey_area > 0) {
-        const totalIntersectionArea = tankResult.rows.reduce((sum, row) => {
-          return sum + (parseFloat(row.intersection_area) || 0);
-        }, 0);
-        const surveyArea = parseFloat(tankResult.rows[0].survey_area);
-        ftlZonePercentage = Math.min(100, (totalIntersectionArea / surveyArea) * 100);
+          ) as buffer_geom
+          FROM ts_warangal_survey_centroids
+          WHERE village = $2 AND surveyno = $3
+          LIMIT 1`,
+          [FALLBACK_WALK_BUFFER_M, village, surveyNumber]
+        );
+        isoGeometry = JSON.parse(bufferResult.rows[0].buffer_geom);
       }
 
-      // Get tank geometry for map display
-      const tankGeomResult = await pool.query(
-        `SELECT ST_AsGeoJSON(ST_Union(ts_tanks.geom)) as tanks_geom
-         FROM ts_tanks
-         WHERE ST_Intersects(
-           (SELECT geom FROM ts_warangal_survey WHERE village = $1 AND surveyno = $2 LIMIT 1)::geography,
-           ts_tanks.geom::geography
-         )`,
-        [village, surveyNumber]
+      // Step 3: Get POIs within isochrone (matching original)
+      const poiResult = await pool.query(
+        `WITH iso AS (
+          SELECT ST_GeomFromGeoJSON($1::text) as geom
+        )
+        SELECT 
+          p.category,
+          ST_Y(p.geom) as lat,
+          ST_X(p.geom) as lon
+        FROM ts_overture_poi_3 p, iso
+        WHERE ST_Intersects(p.geom, iso.geom)`,
+        [JSON.stringify(isoGeometry)]
       );
 
-      const tanksGeometry = tankGeomResult.rows.length > 0 && tankGeomResult.rows[0].tanks_geom
-        ? JSON.parse(tankGeomResult.rows[0].tanks_geom)
-        : null;
-
-      // Step 9: Calculate development score
-      const developmentScore = this.calculateDevelopmentScore({
-        totalPOIs,
-        poiBreakdown: poiBreakdownArray,
-        supportiveBusinesses: supportiveBusinessesArray,
-        distanceToPolice: nearestPolice ? nearestPolice.distance_m : null,
-        distanceToHospital: nearestHospital ? nearestHospital.distance_m : null,
-        distanceToRoad: nearestRoad ? nearestRoad.distance_m : null,
-        ftlZonePercentage
+      // Step 4: Process POI data (matching original exactly)
+      const categoryMap = {};
+      poiResult.rows.forEach(poi => {
+        // Match original: use poi.category directly, no fallback
+        if (!categoryMap[poi.category]) {
+          categoryMap[poi.category] = [];
+        }
+        categoryMap[poi.category].push({
+          lat: parseFloat(poi.lat),
+          lon: parseFloat(poi.lon)
+        });
       });
 
-      const scoreBreakdown = developmentScore.breakdown;
+      const totalPois = poiResult.rows.length;
+      const poiBreakdown = Object.keys(categoryMap).map(category => ({
+        category,
+        count: categoryMap[category].length,
+        percent: parseFloat(((categoryMap[category].length / totalPois) * 100).toFixed(2)),
+        locations: categoryMap[category]
+      })).sort((a, b) => b.count - a.count);
 
-      console.log(`✅ Analysis complete: ${totalPOIs} POIs, Score: ${developmentScore.score.toFixed(1)}`);
+      // Supportive businesses subset (matching original exact categories)
+      const supportiveBusinesses = poiBreakdown
+        .filter(item => SUPPORTIVE_CATEGORIES.includes(item.category))
+        .map(item => {
+          const supportiveTotal = poiBreakdown
+            .filter(i => SUPPORTIVE_CATEGORIES.includes(i.category))
+            .reduce((sum, i) => sum + i.count, 0);
+          return {
+            category: item.category,
+            count: item.count,
+            percent: parseFloat(((item.count / supportiveTotal) * 100).toFixed(2))
+          };
+        });
 
-      // Step 10: Return complete analysis result
+      // Step 5: Get nearest features (matching original helper function)
+      const getNearestFeature = async (tableName) => {
+        // Use parameterized query with table name validation
+        const validTables = ['ts_policestations', 'ts_hospitals', 'ts_main_roads'];
+        if (!validTables.includes(tableName)) {
+          throw new Error(`Invalid table name: ${tableName}`);
+        }
+        
+        const result = await pool.query(
+          `WITH survey AS (
+            SELECT geom
+            FROM ts_warangal_survey_centroids
+            WHERE village = $1 AND surveyno = $2
+            LIMIT 1
+          )
+          SELECT
+            ST_Distance(s.geom::geography, f.geom::geography) AS dist_m,
+            ST_Y(f.geom) as lat,
+            ST_X(f.geom) as lon
+          FROM survey s
+          CROSS JOIN LATERAL (
+            SELECT geom
+            FROM ${tableName}
+            ORDER BY s.geom <-> geom
+            LIMIT 1
+          ) f`,
+          [village, surveyNumber]
+        );
+        
+        if (result.rows.length === 0) return null;
+        return {
+          distance_m: parseFloat(result.rows[0].dist_m),
+          lat: parseFloat(result.rows[0].lat),
+          lon: parseFloat(result.rows[0].lon)
+        };
+      };
+
+      const policeData = await getNearestFeature('ts_policestations');
+      const hospitalData = await getNearestFeature('ts_hospitals');
+      const roadData = await getNearestFeature('ts_main_roads');
+
+      // Step 6: Calculate FTL zone intersection with isochrone (matching original)
+      const ftlResult = await pool.query(
+        `WITH iso AS (
+          SELECT ST_GeomFromGeoJSON($1::text) as geom
+        ),
+        intersections AS (
+          SELECT 
+            ST_Area(ST_Intersection(iso.geom::geography, t.geom::geography)) as intersection_area,
+            ST_Area(iso.geom::geography) as total_area
+          FROM iso
+          CROSS JOIN ts_tanks t
+          WHERE ST_Intersects(iso.geom, t.geom)
+        )
+        SELECT 
+          COALESCE(SUM(intersection_area), 0) as total_intersection,
+          MAX(total_area) as isochrone_area
+        FROM intersections`,
+        [JSON.stringify(isoGeometry)]
+      );
+
+      let ftlPercentage = 0;
+      if (ftlResult.rows.length > 0 && ftlResult.rows[0].isochrone_area > 0) {
+        const rawPercentage = (ftlResult.rows[0].total_intersection / ftlResult.rows[0].isochrone_area) * 100;
+        // Apply 9% threshold and round (matching original)
+        ftlPercentage = rawPercentage > 9 ? Math.round(rawPercentage) : 0;
+      }
+
+      // Get intersecting tank geometries for map display (matching original)
+      const tanksGeometry = await pool.query(
+        `WITH iso AS (
+          SELECT ST_GeomFromGeoJSON($1::text) as geom
+        )
+        SELECT json_build_object(
+          'type', 'FeatureCollection',
+          'features', json_agg(
+            json_build_object(
+              'type', 'Feature',
+              'geometry', ST_AsGeoJSON(t.geom)::json
+            )
+          )
+        ) as geojson
+        FROM iso
+        CROSS JOIN ts_tanks t
+        WHERE ST_Intersects(iso.geom, t.geom)`,
+        [JSON.stringify(isoGeometry)]
+      );
+
+      let tanksGeoJSON = null;
+      if (tanksGeometry.rows.length > 0 && tanksGeometry.rows[0].geojson) {
+        tanksGeoJSON = tanksGeometry.rows[0].geojson;
+      }
+
+      // Step 7: Calculate Development Score (matching original formulas exactly)
+      const poiScore = Math.min(30, (totalPois / 100) * 30); // Max 30 points
+      
+      const amenityScore = (() => {
+        let score = 0;
+        if (policeData) score += Math.max(0, 10 - (policeData.distance_m / 1000)); // Up to 10 points
+        if (hospitalData) score += Math.max(0, 10 - (hospitalData.distance_m / 1000)); // Up to 10 points
+        if (roadData) score += Math.max(0, 5 - (roadData.distance_m / 1000)); // Up to 5 points
+        return Math.min(25, score);
+      })();
+      
+      const ftlScore = ftlPercentage === 0 ? 20 : Math.max(0, 20 - (ftlPercentage / 5)); // Max 20, decreases with FTL risk
+      
+      const supportiveTotal = supportiveBusinesses.reduce((sum, b) => sum + b.count, 0);
+      const businessScore = Math.min(15, (supportiveTotal / 20) * 15); // Max 15 points
+      
+      const categoryCount = Object.keys(categoryMap).length;
+      const accessibilityScore = Math.min(10, (categoryCount / 15) * 10); // Max 10 points based on POI diversity
+      
+      const developmentScore = Math.round(poiScore + amenityScore + ftlScore + businessScore + accessibilityScore);
+      
+      // Ensure scores don't exceed their maximums (safety check)
+      const scoreBreakdown = {
+        poi_score: Math.min(30, parseFloat(poiScore.toFixed(1))),
+        amenity_score: Math.min(25, parseFloat(amenityScore.toFixed(1))),
+        ftl_score: Math.min(20, parseFloat(ftlScore.toFixed(1))),
+        business_score: Math.min(15, parseFloat(businessScore.toFixed(1))),
+        accessibility_score: Math.min(10, parseFloat(accessibilityScore.toFixed(1)))
+      };
+
+      console.log(`✅ Analysis complete: ${totalPois} POIs, Score: ${developmentScore}`);
+      console.log(`📊 Score Breakdown:`, JSON.stringify(scoreBreakdown, null, 2));
+      console.log(`🔄 Used Fallback: ${usedFallback}`);
+      console.log(`📍 Location: ${village}, Survey #${surveyNumber}`);
+
+      // Step 8: Return complete analysis result (matching original structure)
       return {
-        latitude,
-        longitude,
-        total_pois: totalPOIs,
-        poi_breakdown: poiBreakdownArray,
-        supportive_businesses: supportiveBusinessesArray,
-        distance_to_police: nearestPolice ? nearestPolice.distance_m / 1000 : null, // Convert to km
-        distance_to_hospital: nearestHospital ? nearestHospital.distance_m / 1000 : null,
-        distance_to_main_road: nearestRoad ? nearestRoad.distance_m / 1000 : null,
-        development_score: developmentScore.score,
+        village,
+        survey_number: surveyNumber,
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        total_pois: totalPois,
+        poi_breakdown: poiBreakdown,
+        distance_to_police: policeData ? parseFloat((policeData.distance_m / 1000).toFixed(3)) : null,
+        distance_to_hospital: hospitalData ? parseFloat((hospitalData.distance_m / 1000).toFixed(3)) : null,
+        distance_to_main_road: roadData ? parseFloat((roadData.distance_m / 1000).toFixed(3)) : null,
+        supportive_businesses: supportiveBusinesses,
+        ftl_zone_percentage: ftlPercentage,
+        development_score: developmentScore,
         score_breakdown: scoreBreakdown,
-        ftl_zone_percentage: Math.round(ftlZonePercentage * 10) / 10, // Round to 1 decimal
+        used_fallback: usedFallback,
+        analysis_date: new Date().toISOString(),
         map_data: {
-          isochrone_geometry: isochroneGeometry,
-          tanks_geometry: tanksGeometry,
-          poi_locations: poiLocationsArray,
-          nearest_police: nearestPolice,
-          nearest_hospital: nearestHospital,
-          nearest_road: nearestRoad
+          isochrone_geometry: isoGeometry,
+          poi_locations: poiBreakdown, // POI locations are in poi_breakdown
+          nearest_police: policeData,
+          nearest_hospital: hospitalData,
+          nearest_road: roadData,
+          tanks_geometry: tanksGeoJSON
         }
       };
     } catch (error) {
@@ -300,97 +298,6 @@ class GISService {
     }
   }
 
-  /**
-   * Calculate development score based on amenities and distances
-   * Score range: 0-100
-   */
-  calculateDevelopmentScore({
-    totalPOIs,
-    poiBreakdown,
-    supportiveBusinesses,
-    distanceToPolice,
-    distanceToHospital,
-    distanceToRoad,
-    ftlZonePercentage
-  }) {
-    let score = 0;
-    const breakdown = {};
-
-    // POI Score (0-40 points)
-    // More POIs = higher score, max at 50+ POIs
-    const poiScore = Math.min(40, (totalPOIs / 50) * 40);
-    score += poiScore;
-    breakdown.poi_score = Math.round(poiScore * 10) / 10;
-
-    // Supportive Businesses Score (0-20 points)
-    const totalSupportive = supportiveBusinesses.reduce((sum, item) => sum + item.count, 0);
-    const supportiveScore = Math.min(20, (totalSupportive / 10) * 20);
-    score += supportiveScore;
-    breakdown.supportive_businesses_score = Math.round(supportiveScore * 10) / 10;
-
-    // Police Distance Score (0-10 points)
-    // Closer = better, max score at <1km
-    let policeScore = 0;
-    if (distanceToPolice !== null) {
-      if (distanceToPolice < 1000) {
-        policeScore = 10;
-      } else if (distanceToPolice < 3000) {
-        policeScore = 7;
-      } else if (distanceToPolice < 5000) {
-        policeScore = 5;
-      } else {
-        policeScore = Math.max(0, 5 - (distanceToPolice - 5000) / 1000);
-      }
-    }
-    score += policeScore;
-    breakdown.police_distance_score = Math.round(policeScore * 10) / 10;
-
-    // Hospital Distance Score (0-10 points)
-    let hospitalScore = 0;
-    if (distanceToHospital !== null) {
-      if (distanceToHospital < 2000) {
-        hospitalScore = 10;
-      } else if (distanceToHospital < 5000) {
-        hospitalScore = 7;
-      } else if (distanceToHospital < 10000) {
-        hospitalScore = 5;
-      } else {
-        hospitalScore = Math.max(0, 5 - (distanceToHospital - 10000) / 2000);
-      }
-    }
-    score += hospitalScore;
-    breakdown.hospital_distance_score = Math.round(hospitalScore * 10) / 10;
-
-    // Road Distance Score (0-10 points)
-    let roadScore = 0;
-    if (distanceToRoad !== null) {
-      if (distanceToRoad < 500) {
-        roadScore = 10;
-      } else if (distanceToRoad < 1000) {
-        roadScore = 8;
-      } else if (distanceToRoad < 2000) {
-        roadScore = 6;
-      } else {
-        roadScore = Math.max(0, 6 - (distanceToRoad - 2000) / 1000);
-      }
-    }
-    score += roadScore;
-    breakdown.road_distance_score = Math.round(roadScore * 10) / 10;
-
-    // FTL Zone Penalty (0-10 points deduction)
-    // Higher FTL percentage = lower score
-    const ftlPenalty = (ftlZonePercentage / 100) * 10;
-    score -= ftlPenalty;
-    breakdown.ftl_penalty = Math.round(ftlPenalty * 10) / 10;
-
-    // Ensure score is between 0 and 100
-    score = Math.max(0, Math.min(100, score));
-
-    return {
-      score: Math.round(score * 10) / 10,
-      breakdown
-    };
-  }
 }
 
 export const gisService = new GISService();

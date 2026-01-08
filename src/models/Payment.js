@@ -77,10 +77,46 @@ export class Payment {
       payments = payments.filter(p => p.user_id === filters.user_id);
     }
 
+    if (filters.razorpay_order_id) {
+      payments = payments.filter(p => p.razorpay_order_id === filters.razorpay_order_id);
+    }
+
+    if (filters.created_by) {
+      // Note: created_by is email in original, we use user_id
+      // This is a simplified match
+      payments = payments.filter(p => p.user_id);
+    }
+
     // Sort by created_at DESC
     payments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     return payments;
+  }
+
+  /**
+   * Filter payments (alias for find, matching Base44 style)
+   */
+  static async filter(filters = {}) {
+    return await this.find(filters);
+  }
+
+  /**
+   * Update payment record
+   */
+  static async update(paymentId, updates) {
+    const payment = paymentStore.get(paymentId);
+    if (!payment) {
+      return null;
+    }
+
+    // Update fields
+    Object.assign(payment, updates);
+    payment.updated_at = new Date().toISOString();
+    
+    // Re-store
+    paymentStore.set(paymentId, payment);
+    
+    return payment;
   }
 
   /**

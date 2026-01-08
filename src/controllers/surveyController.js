@@ -32,6 +32,8 @@ export const analyzeSurvey = asyncHandler(async (req, res) => {
       ...analysisResult
     });
 
+    // Return in Base44-compatible format
+    // Frontend expects response.data.data structure
     res.json({
       data: {
         success: true,

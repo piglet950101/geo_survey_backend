@@ -8,6 +8,7 @@ import {
   searchSurveyNumbers
 } from '../controllers/villageController.js';
 import { exportReportPDF } from '../controllers/exportController.js';
+import { debugSurveyData } from '../controllers/debugController.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -27,6 +28,9 @@ router.post('/analyze-survey', analyzeSurvey);
 
 // Export routes
 router.post('/export-pdf', exportReportPDF);
+
+// Debug routes
+router.post('/debug-survey-data', debugSurveyData);
 
 // Test routes
 router.get('/test', (req, res) => {

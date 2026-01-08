@@ -35,7 +35,8 @@ export class SurveyResult {
       development_score,
       score_breakdown,
       ftl_zone_percentage,
-      map_data
+      map_data,
+      used_fallback
     } = data;
 
     // Create a point geometry from lat/lon, then buffer it to create a MultiPolygon
@@ -79,8 +80,15 @@ export class SurveyResult {
       score_breakdown,
       ftl_zone_percentage,
       map_data,
+      used_fallback: used_fallback || false, // Include used_fallback flag
       analysis_date: new Date().toISOString()
     };
+    
+    console.log(`💾 Storing analysis for gid=${row.gid}:`, {
+      scoreBreakdown: score_breakdown,
+      developmentScore: development_score,
+      usedFallback: analysisData.used_fallback
+    });
     
     AnalysisStore.set(row.gid, analysisData);
     
@@ -113,7 +121,54 @@ export class SurveyResult {
     const row = result.rows[0];
     
     // Get analysis data from memory store
-    const analysisData = AnalysisStore.get(row.gid) || {};
+    let analysisData = AnalysisStore.get(row.gid) || {};
+    
+    // Transform old score_breakdown format to new format if needed
+    if (analysisData.score_breakdown) {
+      const oldBreakdown = analysisData.score_breakdown;
+      
+      // Check if it's in old format (has police_distance_score, etc.)
+      if (oldBreakdown.police_distance_score !== undefined || 
+          oldBreakdown.supportive_businesses_score !== undefined || 
+          oldBreakdown.ftl_penalty !== undefined ||
+          !oldBreakdown.amenity_score) {  // Also check if new format fields are missing
+        console.log(`🔄 Converting old score_breakdown format for gid=${row.gid}`);
+        console.log(`   Old format:`, JSON.stringify(oldBreakdown, null, 2));
+        
+        // Convert old format to new format
+        const newBreakdown = {
+          poi_score: Math.min(30, oldBreakdown.poi_score || 0),
+          amenity_score: Math.min(25, (oldBreakdown.police_distance_score || 0) + 
+                                    (oldBreakdown.hospital_distance_score || 0) + 
+                                    (oldBreakdown.road_distance_score || 0)),
+          ftl_score: oldBreakdown.ftl_score !== undefined 
+            ? Math.min(20, oldBreakdown.ftl_score) 
+            : (oldBreakdown.ftl_penalty !== undefined 
+                ? Math.min(20, Math.max(0, 20 - oldBreakdown.ftl_penalty)) 
+                : 0),
+          business_score: Math.min(15, oldBreakdown.supportive_businesses_score || 0),
+          accessibility_score: Math.min(10, oldBreakdown.accessibility_score || 0)
+        };
+        
+        console.log(`   New format:`, JSON.stringify(newBreakdown, null, 2));
+        
+        analysisData = {
+          ...analysisData,
+          score_breakdown: newBreakdown
+        };
+        
+        // Update in store with new format
+        AnalysisStore.set(row.gid, analysisData);
+      }
+    }
+    
+    // Log for debugging
+    console.log(`📊 Retrieving analysis for gid=${row.gid}:`, {
+      hasAnalysisData: !!analysisData.score_breakdown,
+      scoreBreakdown: analysisData.score_breakdown,
+      developmentScore: analysisData.development_score,
+      usedFallback: analysisData.used_fallback
+    });
     
     // Return in expected format
     return {
@@ -131,17 +186,18 @@ export class SurveyResult {
    * Find survey results by filters
    */
   static async find(filters = {}) {
+    // If filtering by id, use findById which includes analysis data
+    if (filters.id) {
+      const result = await this.findById(filters.id);
+      return result ? [result] : [];
+    }
+
     let query = `SELECT gid, surveyno, village, geom,
                         ST_X(ST_Centroid(geom)) as longitude,
                         ST_Y(ST_Centroid(geom)) as latitude
                  FROM ts_warangal_survey WHERE 1=1`;
     const params = [];
     let paramCount = 1;
-
-    if (filters.id) {
-      query += ` AND gid = $${paramCount++}`;
-      params.push(parseInt(filters.id));
-    }
 
     if (filters.survey_number || filters.surveyno) {
       query += ` AND surveyno = $${paramCount++}`;
@@ -157,15 +213,54 @@ export class SurveyResult {
 
     const result = await pool.query(query, params);
 
-    // Transform to expected format
-    return result.rows.map(row => ({
-      id: row.gid.toString(),
-      gid: row.gid,
-      village: row.village,
-      survey_number: row.surveyno,
-      latitude: parseFloat(row.latitude),
-      longitude: parseFloat(row.longitude),
-    }));
+    // Transform to expected format and include analysis data if available
+    return result.rows.map(row => {
+      let analysisData = AnalysisStore.get(row.gid) || {};
+      
+      // Transform old score_breakdown format to new format if needed
+      if (analysisData.score_breakdown) {
+        const oldBreakdown = analysisData.score_breakdown;
+        
+        // Check if it's in old format
+        if (oldBreakdown.police_distance_score !== undefined || 
+            oldBreakdown.supportive_businesses_score !== undefined || 
+            oldBreakdown.ftl_penalty !== undefined ||
+            !oldBreakdown.amenity_score) {
+          console.log(`🔄 Converting old format in find() for gid=${row.gid}`);
+          const newBreakdown = {
+            poi_score: Math.min(30, oldBreakdown.poi_score || 0),
+            amenity_score: Math.min(25, (oldBreakdown.police_distance_score || 0) + 
+                                      (oldBreakdown.hospital_distance_score || 0) + 
+                                      (oldBreakdown.road_distance_score || 0)),
+            ftl_score: oldBreakdown.ftl_score !== undefined 
+              ? Math.min(20, oldBreakdown.ftl_score) 
+              : (oldBreakdown.ftl_penalty !== undefined 
+                  ? Math.min(20, Math.max(0, 20 - oldBreakdown.ftl_penalty)) 
+                  : 0),
+            business_score: Math.min(15, oldBreakdown.supportive_businesses_score || 0),
+            accessibility_score: Math.min(10, oldBreakdown.accessibility_score || 0)
+          };
+          
+          analysisData = {
+            ...analysisData,
+            score_breakdown: newBreakdown
+          };
+          
+          // Update in store
+          AnalysisStore.set(row.gid, analysisData);
+        }
+      }
+      
+      return {
+        id: row.gid.toString(),
+        gid: row.gid,
+        village: row.village,
+        survey_number: row.surveyno,
+        latitude: parseFloat(row.latitude),
+        longitude: parseFloat(row.longitude),
+        ...analysisData
+      };
+    });
   }
 }
 

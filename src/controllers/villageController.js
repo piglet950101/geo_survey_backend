@@ -6,12 +6,12 @@ import { asyncHandler } from '../middleware/errorHandler.js';
  */
 export const getAllData = asyncHandler(async (req, res) => {
     try {
-      // Get village data from ts_warangal_survey table
+      // Get village data from ts_warangal_survey_centroids table (matching original)
       let villageData = {};
       let allVillages = [];
 
       const surveyResult = await pool.query(
-        'SELECT DISTINCT village, surveyno FROM ts_warangal_survey WHERE village IS NOT NULL AND surveyno IS NOT NULL ORDER BY village, surveyno'
+        'SELECT DISTINCT village, surveyno FROM ts_warangal_survey_centroids WHERE village IS NOT NULL AND surveyno IS NOT NULL ORDER BY village, surveyno'
       );
       
       surveyResult.rows.forEach(row => {
@@ -57,7 +57,7 @@ export const getSuggestions = asyncHandler(async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT village 
-       FROM ts_warangal_survey 
+       FROM ts_warangal_survey_centroids 
        WHERE village IS NOT NULL AND LOWER(village) LIKE LOWER($1) 
        ORDER BY village 
        LIMIT 20`,
@@ -95,7 +95,7 @@ export const getSurveyNumbers = asyncHandler(async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT surveyno as survey_number
-       FROM ts_warangal_survey 
+       FROM ts_warangal_survey_centroids 
        WHERE village = $1 AND surveyno IS NOT NULL
        ORDER BY surveyno`,
       [village]
@@ -132,11 +132,11 @@ export const searchVillages = asyncHandler(async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT village 
-       FROM ts_warangal_survey 
+       FROM ts_warangal_survey_centroids 
        WHERE village IS NOT NULL AND LOWER(village) LIKE LOWER($1) 
        ORDER BY village 
-       LIMIT 50`,
-      [`%${query}%`]
+       LIMIT 20`,
+      [`${query}%`]
     );
 
     const villages = result.rows.map(row => row.village);
@@ -168,15 +168,20 @@ export const searchSurveyNumbers = asyncHandler(async (req, res) => {
   }
 
   try {
-    let sql = `SELECT DISTINCT surveyno as survey_number FROM ts_warangal_survey WHERE surveyno IS NOT NULL AND LOWER(surveyno) LIKE LOWER($1)`;
-    const params = [`%${query}%`];
+    let sql = `SELECT DISTINCT surveyno as survey_number FROM ts_warangal_survey_centroids WHERE surveyno IS NOT NULL`;
+    const params = [];
 
     if (village) {
-      sql += ` AND village = $2`;
+      sql += ` AND village = $${params.length + 1}`;
       params.push(village);
     }
 
-    sql += ` ORDER BY surveyno LIMIT 50`;
+    if (query && query.length > 0) {
+      sql += ` AND LOWER(surveyno) LIKE LOWER($${params.length + 1})`;
+      params.push(`${query}%`);
+    }
+
+    sql += ` ORDER BY surveyno LIMIT 20`;
 
     const result = await pool.query(sql, params);
     const surveyNumbers = result.rows.map(row => row.survey_number);

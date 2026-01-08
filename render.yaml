@@ -30,4 +30,8 @@ services:
         sync: false
       - key: CORS_ORIGIN
         sync: false
+      - key: MAPBOX_TOKEN
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
 

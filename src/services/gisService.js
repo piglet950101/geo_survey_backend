@@ -54,20 +54,48 @@ class GISService {
       let isoGeometry;
       let usedFallback = false;
 
+      if (!MAPBOX_TOKEN) {
+        console.error('❌ MAPBOX_TOKEN not set in environment variables!');
+        throw new Error('Mapbox token not configured. Please set MAPBOX_TOKEN in environment variables.');
+      }
+
       try {
         const isoUrl = `https://api.mapbox.com/isochrone/v1/mapbox/walking/${longitude},${latitude}?contours_minutes=${ISO_MINUTES}&polygons=true&denoise=${DENOISE}&access_token=${MAPBOX_TOKEN}`;
+        console.log(`🗺️  Requesting isochrone from Mapbox API...`);
+        console.log(`   URL: ${isoUrl.replace(MAPBOX_TOKEN, '***')}`);
+        
         const isoResponse = await fetch(isoUrl);
         
-        if (!isoResponse.ok) throw new Error('Mapbox API error');
+        if (!isoResponse.ok) {
+          const errorText = await isoResponse.text();
+          console.error(`❌ Mapbox API error (${isoResponse.status}):`, errorText);
+          throw new Error(`Mapbox API error: ${isoResponse.status} - ${errorText}`);
+        }
         
         const isoData = await isoResponse.json();
+        console.log(`📦 Mapbox API response:`, {
+          hasFeatures: !!isoData.features,
+          featureCount: isoData.features?.length || 0,
+          geometryType: isoData.features?.[0]?.geometry?.type
+        });
+        
         if (isoData.features && isoData.features.length > 0) {
           isoGeometry = isoData.features[0].geometry;
+          
+          // Validate geometry type (should be Polygon or MultiPolygon, not Point)
+          if (isoGeometry.type === 'Polygon' || isoGeometry.type === 'MultiPolygon') {
+            console.log(`✅ Isochrone received: ${isoGeometry.type} with ${isoGeometry.coordinates?.[0]?.length || 0} coordinates`);
+          } else {
+            console.warn(`⚠️  Unexpected geometry type: ${isoGeometry.type}, falling back to buffer`);
+            throw new Error(`Unexpected geometry type: ${isoGeometry.type}`);
+          }
         } else {
           throw new Error('No isochrone data returned');
         }
       } catch (error) {
-        console.log(`Mapbox failed: ${error.message}. Using ${FALLBACK_WALK_BUFFER_M}m buffer fallback.`);
+        console.warn(`⚠️  Mapbox isochrone failed: ${error.message}`);
+        console.log(`   Using ${FALLBACK_WALK_BUFFER_M}m circular buffer fallback.`);
+        console.log(`   Note: This will create a circular area instead of a walkable isochrone.`);
         usedFallback = true;
         
         // Fallback to 1000m buffer (matching original)
@@ -87,6 +115,7 @@ class GISService {
           [FALLBACK_WALK_BUFFER_M, village, surveyNumber]
         );
         isoGeometry = JSON.parse(bufferResult.rows[0].buffer_geom);
+        console.log(`   Fallback buffer geometry type: ${isoGeometry.type}`);
       }
 
       // Step 3: Get POIs within isochrone (matching original)

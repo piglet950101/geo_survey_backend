@@ -82,8 +82,15 @@ class GISService {
         if (isoData.features && isoData.features.length > 0) {
           isoGeometry = isoData.features[0].geometry;
           
-          // Validate geometry type (should be Polygon or MultiPolygon, not Point)
+          // Validate geometry type and coordinates (should be Polygon or MultiPolygon, not Point)
           if (isoGeometry.type === 'Polygon' || isoGeometry.type === 'MultiPolygon') {
+            // Validate coordinates are not null
+            if (!isoGeometry.coordinates || 
+                (isoGeometry.type === 'Polygon' && (!Array.isArray(isoGeometry.coordinates) || isoGeometry.coordinates.length === 0)) ||
+                (isoGeometry.type === 'MultiPolygon' && (!Array.isArray(isoGeometry.coordinates) || isoGeometry.coordinates.length === 0))) {
+              console.warn(`⚠️  Isochrone geometry has invalid coordinates, falling back to buffer`);
+              throw new Error('Invalid isochrone coordinates');
+            }
             console.log(`✅ Isochrone received: ${isoGeometry.type} with ${isoGeometry.coordinates?.[0]?.length || 0} coordinates`);
           } else {
             console.warn(`⚠️  Unexpected geometry type: ${isoGeometry.type}, falling back to buffer`);
@@ -116,6 +123,13 @@ class GISService {
         );
         isoGeometry = JSON.parse(bufferResult.rows[0].buffer_geom);
         console.log(`   Fallback buffer geometry type: ${isoGeometry.type}`);
+        
+        // Validate fallback geometry has valid coordinates
+        if (!isoGeometry || !isoGeometry.coordinates || 
+            (!Array.isArray(isoGeometry.coordinates) || isoGeometry.coordinates.length === 0)) {
+          console.error(`❌ Fallback buffer geometry is invalid!`);
+          throw new Error('Invalid fallback buffer geometry');
+        }
       }
 
       // Step 3: Get POIs within isochrone (matching original)
@@ -242,12 +256,12 @@ class GISService {
         )
         SELECT json_build_object(
           'type', 'FeatureCollection',
-          'features', json_agg(
+          'features', COALESCE(json_agg(
             json_build_object(
               'type', 'Feature',
               'geometry', ST_AsGeoJSON(t.geom)::json
             )
-          )
+          ), '[]'::json)
         ) as geojson
         FROM iso
         CROSS JOIN ts_tanks t
@@ -257,7 +271,11 @@ class GISService {
 
       let tanksGeoJSON = null;
       if (tanksGeometry.rows.length > 0 && tanksGeometry.rows[0].geojson) {
-        tanksGeoJSON = tanksGeometry.rows[0].geojson;
+        const geo = tanksGeometry.rows[0].geojson;
+        // Validate: must have features array (not null) and at least one feature
+        if (geo && geo.features && Array.isArray(geo.features) && geo.features.length > 0) {
+          tanksGeoJSON = geo;
+        }
       }
 
       // Step 7: Calculate Development Score (matching original formulas exactly)

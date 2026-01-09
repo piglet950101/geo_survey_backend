@@ -24,7 +24,7 @@ const __dirname = path.dirname(__filename);
  * 9. Analysis Details (right column)
  */
 export const exportReportPDF = asyncHandler(async (req, res) => {
-  const { surveyResultId } = req.body;
+  const { surveyResultId, resultData } = req.body;
   const userId = req.user?.id;
 
   if (!surveyResultId) {
@@ -33,14 +33,31 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     });
   }
 
-  // Get survey result
-  const result = await SurveyResult.findById(surveyResultId);
+  // Use passed resultData if available (to avoid in-memory storage issues on deployed servers)
+  // Otherwise fall back to fetching from database/store
+  let result;
+  if (resultData && resultData.poi_breakdown) {
+    // Use the data passed from frontend
+    console.log('📄 PDF Export: Using resultData passed from frontend');
+    result = resultData;
+  } else {
+    // Fall back to fetching from database
+    console.log('📄 PDF Export: Fetching result from database for ID:', surveyResultId);
+    result = await SurveyResult.findById(surveyResultId);
+  }
 
   if (!result) {
     return res.status(404).json({
       data: { error: 'Survey result not found' }
     });
   }
+
+  console.log('📄 PDF Export - Result data:', {
+    id: result.id,
+    village: result.village,
+    hasPOIBreakdown: !!result.poi_breakdown,
+    poiCount: result.poi_breakdown?.length || 0
+  });
 
   // Create PDF - A4 size
   const doc = new jsPDF('p', 'mm', 'a4');

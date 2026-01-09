@@ -114,7 +114,7 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const poiCardHeight = 95;
   drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
 
-  // Draw Donut Chart
+  // Draw Donut Chart using circles (simpler approach)
   const chartCenterX = margin + 35;
   const chartCenterY = contentY + 50;
   const outerRadius = 28;
@@ -123,16 +123,18 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const poiBreakdown = (result.poi_breakdown || []).slice(0, 18);
   const totalPois = poiBreakdown.reduce((sum, p) => sum + p.count, 0) || 1;
 
-  // Draw donut segments
+  // Draw donut segments using pie slices
   let startAngle = -90; // Start from top
   poiBreakdown.forEach((poi, index) => {
     const color = COLORS[index % COLORS.length];
     const sweepAngle = (poi.count / totalPois) * 360;
-    drawDonutSegment(doc, chartCenterX, chartCenterY, outerRadius, innerRadius, startAngle, sweepAngle, color);
+    if (sweepAngle > 0) {
+      drawPieSlice(doc, chartCenterX, chartCenterY, outerRadius, startAngle, sweepAngle, color);
+    }
     startAngle += sweepAngle;
   });
 
-  // Draw center circle (white)
+  // Draw center circle (white) to create donut effect
   doc.setFillColor(255, 255, 255);
   doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
 
@@ -148,13 +150,13 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     const color = COLORS[index % COLORS.length];
 
     // Color dot
-    doc.setFillColor(...color);
+    doc.setFillColor(color[0], color[1], color[2]);
     doc.circle(legendStartX, y, 1.5, 'F');
 
     // Count and percentage
     doc.setTextColor(0, 0, 0);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${poi.count}`, legendStartX + 4, y + 1);
+    doc.text(String(poi.count), legendStartX + 4, y + 1);
 
     doc.setTextColor(107, 114, 128);
     doc.setFont('helvetica', 'normal');
@@ -174,13 +176,13 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     const colX = legendStartX + 58;
 
     // Color dot
-    doc.setFillColor(...color);
+    doc.setFillColor(color[0], color[1], color[2]);
     doc.circle(colX, y, 1.5, 'F');
 
     // Count and percentage
     doc.setTextColor(0, 0, 0);
     doc.setFont('helvetica', 'bold');
-    doc.text(`${poi.count}`, colX + 4, y + 1);
+    doc.text(String(poi.count), colX + 4, y + 1);
 
     doc.setTextColor(107, 114, 128);
     doc.setFont('helvetica', 'normal');
@@ -210,18 +212,27 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(31, 41, 55);
-  doc.text(`Chance of falling in FTL zone`, margin + 4, ftlY + 22);
+  doc.text('Chance of falling in FTL zone', margin + 4, ftlY + 22);
 
   // Large percentage on right
   doc.setFontSize(24);
-  doc.setTextColor(ftlPercentage === 0 ? [34, 197, 94] : [239, 68, 68]);
+  if (ftlPercentage === 0) {
+    doc.setTextColor(34, 197, 94);
+  } else {
+    doc.setTextColor(239, 68, 68);
+  }
   doc.text(`${ftlPercentage}%`, margin + leftColWidth - 20, ftlY + 25, { align: 'right' });
 
   // Risk status
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(ftlPercentage === 0 ? [34, 197, 94] : [239, 68, 68]);
-  doc.text(ftlPercentage === 0 ? 'No Risk' : 'At Risk', margin + 4, ftlY + 30);
+  if (ftlPercentage === 0) {
+    doc.setTextColor(34, 197, 94);
+    doc.text('No Risk', margin + 4, ftlY + 30);
+  } else {
+    doc.setTextColor(239, 68, 68);
+    doc.text('At Risk', margin + 4, ftlY + 30);
+  }
 
   // Description
   doc.setFontSize(6);
@@ -293,11 +304,11 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   }
 
   // Map Legend
-  const legendY = mapY + 100;
+  const mapLegendY = mapY + 100;
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(55, 65, 81);
-  doc.text('Map Legend:', margin + 4, legendY);
+  doc.text('Map Legend:', margin + 4, mapLegendY);
 
   doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
@@ -306,45 +317,45 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   let legendX = margin + 25;
   // Survey Location
   doc.setFillColor(239, 68, 68);
-  doc.circle(legendX, legendY - 1, 2, 'F');
-  doc.text('Survey Location', legendX + 4, legendY);
+  doc.circle(legendX, mapLegendY - 1, 2, 'F');
+  doc.setTextColor(55, 65, 81);
+  doc.text('Survey Location', legendX + 4, mapLegendY);
 
   // 10-min Walk Area
   legendX += 30;
   doc.setDrawColor(147, 51, 234);
   doc.setLineWidth(0.5);
-  doc.line(legendX - 3, legendY - 1, legendX + 3, legendY - 1);
-  doc.text('10-min Walk Area', legendX + 5, legendY);
+  doc.line(legendX - 3, mapLegendY - 1, legendX + 3, mapLegendY - 1);
+  doc.text('10-min Walk Area', legendX + 5, mapLegendY);
 
   // Police Station
   legendX += 30;
   doc.setFillColor(59, 130, 246);
-  doc.circle(legendX, legendY - 1, 2, 'F');
-  doc.text('Police Station', legendX + 4, legendY);
+  doc.circle(legendX, mapLegendY - 1, 2, 'F');
+  doc.text('Police Station', legendX + 4, mapLegendY);
 
   // Hospital
   legendX += 25;
   doc.setFillColor(239, 68, 68);
-  doc.circle(legendX, legendY - 1, 2, 'F');
-  doc.text('Hospital', legendX + 4, legendY);
+  doc.circle(legendX, mapLegendY - 1, 2, 'F');
+  doc.text('Hospital', legendX + 4, mapLegendY);
 
   // Second legend row
-  const legendY2 = legendY + 6;
+  const mapLegendY2 = mapLegendY + 6;
   legendX = margin + 25;
   doc.setFillColor(34, 197, 94);
-  doc.circle(legendX, legendY2 - 1, 2, 'F');
-  doc.text('Main Road', legendX + 4, legendY2);
+  doc.circle(legendX, mapLegendY2 - 1, 2, 'F');
+  doc.text('Main Road', legendX + 4, mapLegendY2);
 
   legendX += 25;
   doc.setFillColor(168, 85, 247);
-  doc.circle(legendX, legendY2 - 1, 2, 'F');
-  doc.text('POIs (colored by category)', legendX + 4, legendY2);
+  doc.circle(legendX, mapLegendY2 - 1, 2, 'F');
+  doc.text('POIs (colored by category)', legendX + 4, mapLegendY2);
 
   legendX += 40;
   doc.setFillColor(37, 99, 235);
-  doc.setDrawColor(37, 99, 235);
-  doc.rect(legendX - 2, legendY2 - 3, 6, 4, 'F');
-  doc.text('FTL Zone (Tank Area)', legendX + 6, legendY2);
+  doc.rect(legendX - 2, mapLegendY2 - 3, 6, 4, 'F');
+  doc.text('FTL Zone (Tank Area)', legendX + 6, mapLegendY2);
 
   // ==================== RIGHT COLUMN ====================
 
@@ -387,7 +398,7 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(22, 163, 74); // Green
-  doc.text(`${devScore}`, scoreCenterX, scoreCenterY + 2, { align: 'center' });
+  doc.text(String(devScore), scoreCenterX, scoreCenterY + 2, { align: 'center' });
 
   // "out of 100"
   doc.setFontSize(6);
@@ -425,7 +436,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     doc.setTextColor(55, 65, 81);
     doc.text(item.label, rightColX + 4, breakdownY);
     doc.setTextColor(34, 197, 94);
-    doc.text(`${item.score.toFixed(1)}/${item.max}`, rightColX + rightColWidth - 4, breakdownY, { align: 'right' });
+    const scoreText = typeof item.score === 'number' ? item.score.toFixed(1) : '0.0';
+    doc.text(`${scoreText}/${item.max}`, rightColX + rightColWidth - 4, breakdownY, { align: 'right' });
     breakdownY += 5;
   });
 
@@ -465,12 +477,9 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setTextColor(107, 114, 128);
   doc.text('Key observations and recommendations', rightColX + 4, insightsY + 13);
 
-  // Checkmark icon
+  // Checkmark icon (green circle)
   doc.setFillColor(34, 197, 94);
   doc.circle(rightColX + 6, insightsY + 20, 2, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(5);
-  doc.text('✓', rightColX + 5, insightsY + 21);
 
   // Insight title
   doc.setFontSize(7);
@@ -505,7 +514,9 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setTextColor(107, 114, 128);
   doc.text('Coordinates', rightColX + 4, detailsY + 14);
   doc.setTextColor(31, 41, 55);
-  doc.text(`${result.latitude?.toFixed(6) || 'N/A'}, ${result.longitude?.toFixed(6) || 'N/A'}`, rightColX + 4, detailsY + 19);
+  const latStr = result.latitude ? result.latitude.toFixed(6) : 'N/A';
+  const lonStr = result.longitude ? result.longitude.toFixed(6) : 'N/A';
+  doc.text(`${latStr}, ${lonStr}`, rightColX + 4, detailsY + 19);
 
   // Analysis Date
   doc.setTextColor(107, 114, 128);
@@ -539,14 +550,14 @@ function drawCard(doc, x, y, width, height, title, headerColor) {
   doc.roundedRect(x, y, width, height, 2, 2, 'FD');
 
   // Colored top border
-  doc.setDrawColor(...headerColor);
+  doc.setDrawColor(headerColor[0], headerColor[1], headerColor[2]);
   doc.setLineWidth(1.5);
   doc.line(x + 2, y, x + width - 2, y);
 
   // Title
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...headerColor);
+  doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
   doc.text(title, x + 4, y + 8);
 
   // Reset line width
@@ -554,54 +565,51 @@ function drawCard(doc, x, y, width, height, title, headerColor) {
 }
 
 /**
- * Draw a donut chart segment
+ * Draw a pie slice (for donut chart)
+ * Uses lines() method which is available in jsPDF
  */
-function drawDonutSegment(doc, cx, cy, outerR, innerR, startAngle, sweepAngle, color) {
+function drawPieSlice(doc, cx, cy, radius, startAngle, sweepAngle, color) {
   if (sweepAngle <= 0) return;
 
-  doc.setFillColor(...color);
+  doc.setFillColor(color[0], color[1], color[2]);
 
   // Convert angles to radians
   const startRad = (startAngle * Math.PI) / 180;
   const endRad = ((startAngle + sweepAngle) * Math.PI) / 180;
 
-  // Draw arc using small line segments
-  const steps = Math.max(Math.ceil(sweepAngle / 5), 1);
+  // Build path points for the pie slice
+  const steps = Math.max(Math.ceil(sweepAngle / 3), 2);
   const angleStep = (endRad - startRad) / steps;
 
-  // Build path points
-  const points = [];
+  // Start from center
+  const points = [[cx, cy]];
 
-  // Outer arc
+  // Add arc points
   for (let i = 0; i <= steps; i++) {
     const angle = startRad + (i * angleStep);
-    points.push({
-      x: cx + outerR * Math.cos(angle),
-      y: cy + outerR * Math.sin(angle)
-    });
+    points.push([
+      cx + radius * Math.cos(angle),
+      cy + radius * Math.sin(angle)
+    ]);
   }
 
-  // Inner arc (reverse direction)
-  for (let i = steps; i >= 0; i--) {
-    const angle = startRad + (i * angleStep);
-    points.push({
-      x: cx + innerR * Math.cos(angle),
-      y: cy + innerR * Math.sin(angle)
-    });
-  }
-
-  // Draw filled polygon
+  // Draw the filled polygon using lines
   if (points.length > 2) {
-    doc.setFillColor(...color);
-
-    // Use triangle fan approach for filling
-    for (let i = 1; i < points.length - 1; i++) {
-      const p0 = points[0];
-      const p1 = points[i];
-      const p2 = points[i + 1];
-
-      doc.triangle(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, 'F');
+    // Convert to relative coordinates for jsPDF lines() method
+    const linesArray = [];
+    for (let i = 1; i < points.length; i++) {
+      linesArray.push([
+        points[i][0] - points[i-1][0],
+        points[i][1] - points[i-1][1]
+      ]);
     }
+    // Close the path back to center
+    linesArray.push([
+      points[0][0] - points[points.length-1][0],
+      points[0][1] - points[points.length-1][1]
+    ]);
+
+    doc.lines(linesArray, points[0][0], points[0][1], [1, 1], 'F', true);
   }
 }
 
@@ -612,19 +620,19 @@ function drawDistanceRow(doc, x, y, width, label, distance, bgColor, iconColor) 
   const rowHeight = 12;
 
   // Background
-  doc.setFillColor(...bgColor);
+  doc.setFillColor(bgColor[0], bgColor[1], bgColor[2]);
   doc.roundedRect(x, y, width, rowHeight, 1.5, 1.5, 'F');
 
   // Icon circle
-  doc.setFillColor(...iconColor);
+  doc.setFillColor(iconColor[0], iconColor[1], iconColor[2]);
   doc.circle(x + 6, y + rowHeight / 2, 4, 'F');
 
-  // Icon text (emoji doesn't work well, use letter)
+  // Icon text (use letter)
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
   const iconLetter = label === 'Police Station' ? 'P' : label === 'Hospital' ? 'H' : 'R';
-  doc.text(iconLetter, x + 5, y + rowHeight / 2 + 1.5);
+  doc.text(iconLetter, x + 4.5, y + rowHeight / 2 + 1.5);
 
   // Label
   doc.setTextColor(107, 114, 128);
@@ -636,11 +644,15 @@ function drawDistanceRow(doc, x, y, width, label, distance, bgColor, iconColor) 
   doc.setTextColor(31, 41, 55);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
-  doc.text(`${distance}`, x + 13, y + 10);
+  const distStr = String(distance);
+  doc.text(distStr, x + 13, y + 10);
+
+  // "km" label
   doc.setFontSize(6);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(107, 114, 128);
-  doc.text('km', x + 13 + doc.getTextWidth(`${distance}`) + 1, y + 10);
+  const distWidth = doc.getTextWidth(distStr);
+  doc.text('km', x + 14 + distWidth, y + 10);
 
   // Right side - Distance in meters
   doc.setTextColor(107, 114, 128);
@@ -649,7 +661,8 @@ function drawDistanceRow(doc, x, y, width, label, distance, bgColor, iconColor) 
   doc.setTextColor(55, 65, 81);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  doc.text(`${Math.round(distance * 1000)}m`, x + width - 12, y + 9);
+  const meters = Math.round(distance * 1000);
+  doc.text(`${meters}m`, x + width - 12, y + 9);
 }
 
 /**

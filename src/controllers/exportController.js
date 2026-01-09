@@ -65,6 +65,15 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const rightColWidth = 62;
   const rightColX = margin + leftColWidth + 5;
 
+  // Helper function to calculate height preserving aspect ratio
+  const getImageHeight = (imageObj, targetWidth) => {
+    if (imageObj && imageObj.width && imageObj.height) {
+      const aspectRatio = imageObj.height / imageObj.width;
+      return targetWidth * aspectRatio;
+    }
+    return null; // Return null if dimensions not available
+  };
+
 
   // ==================== HEADER SECTION ====================
 
@@ -121,14 +130,18 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   // ==================== LEFT COLUMN ====================
 
   // 3. Nearby Points of Interest - USE CAPTURED IMAGE FROM FRONTEND
-  const poiCardHeight = 95;
+  let poiCardHeight = 95; // Default fallback height
 
   if (chartImages?.poiChart) {
     // Use the exact image captured from frontend
     try {
-      const format = chartImages.poiChart.includes('image/jpeg') ? 'JPEG' : 'PNG';
-      doc.addImage(chartImages.poiChart, format, margin, contentY, leftColWidth, poiCardHeight);
-      console.log('✅ POI chart image added to PDF');
+      const imageData = chartImages.poiChart.data || chartImages.poiChart;
+      const format = imageData.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      // Calculate height from aspect ratio if dimensions provided
+      const calculatedHeight = getImageHeight(chartImages.poiChart, leftColWidth);
+      if (calculatedHeight) poiCardHeight = calculatedHeight;
+      doc.addImage(imageData, format, margin, contentY, leftColWidth, poiCardHeight);
+      console.log('✅ POI chart image added to PDF with height:', poiCardHeight);
     } catch (error) {
       console.error('❌ Failed to add POI chart image:', error);
       drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
@@ -146,13 +159,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // 4. FTL Zone Analysis - USE CAPTURED IMAGE FROM FRONTEND
   const ftlY = contentY + poiCardHeight + 3;
-  const ftlCardHeight = 50;
+  let ftlCardHeight = 50; // Default fallback height
 
   if (chartImages?.ftlChart) {
     try {
-      const format = chartImages.ftlChart.includes('image/jpeg') ? 'JPEG' : 'PNG';
-      doc.addImage(chartImages.ftlChart, format, margin, ftlY, leftColWidth, ftlCardHeight);
-      console.log('✅ FTL chart image added to PDF');
+      const imageData = chartImages.ftlChart.data || chartImages.ftlChart;
+      const format = imageData.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      const calculatedHeight = getImageHeight(chartImages.ftlChart, leftColWidth);
+      if (calculatedHeight) ftlCardHeight = calculatedHeight;
+      doc.addImage(imageData, format, margin, ftlY, leftColWidth, ftlCardHeight);
+      console.log('✅ FTL chart image added to PDF with height:', ftlCardHeight);
     } catch (error) {
       console.error('❌ Failed to add FTL chart image:', error);
       drawCard(doc, margin, ftlY, leftColWidth, ftlCardHeight, 'FTL Zone Analysis', [220, 38, 38]);
@@ -163,13 +179,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // 5. Survey Location Map - USE CAPTURED IMAGE FROM FRONTEND
   const mapY = ftlY + ftlCardHeight + 3;
-  const mapCardHeight = 100;
+  let mapCardHeight = 100; // Default fallback height
 
   if (chartImages?.map) {
     try {
-      const format = chartImages.map.includes('image/jpeg') ? 'JPEG' : 'PNG';
-      doc.addImage(chartImages.map, format, margin, mapY, leftColWidth, mapCardHeight);
-      console.log('✅ Map image added to PDF');
+      const imageData = chartImages.map.data || chartImages.map;
+      const format = imageData.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      const calculatedHeight = getImageHeight(chartImages.map, leftColWidth);
+      if (calculatedHeight) mapCardHeight = calculatedHeight;
+      doc.addImage(imageData, format, margin, mapY, leftColWidth, mapCardHeight);
+      console.log('✅ Map image added to PDF with height:', mapCardHeight);
     } catch (error) {
       console.error('❌ Failed to add map image:', error);
       drawCard(doc, margin, mapY, leftColWidth, mapCardHeight, 'Survey Location Map', [59, 130, 246]);
@@ -181,13 +200,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   // ==================== RIGHT COLUMN ====================
 
   // 6. Development Score - USE CAPTURED IMAGE FROM FRONTEND
-  const scoreCardHeight = 95;
+  let scoreCardHeight = 95; // Default fallback height
 
   if (chartImages?.score) {
     try {
-      const format = chartImages.score.includes('image/jpeg') ? 'JPEG' : 'PNG';
-      doc.addImage(chartImages.score, format, rightColX, contentY, rightColWidth, scoreCardHeight);
-      console.log('✅ Score image added to PDF');
+      const imageData = chartImages.score.data || chartImages.score;
+      const format = imageData.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      const calculatedHeight = getImageHeight(chartImages.score, rightColWidth);
+      if (calculatedHeight) scoreCardHeight = calculatedHeight;
+      doc.addImage(imageData, format, rightColX, contentY, rightColWidth, scoreCardHeight);
+      console.log('✅ Score image added to PDF with height:', scoreCardHeight);
     } catch (error) {
       console.error('❌ Failed to add score image:', error);
       drawCard(doc, rightColX, contentY, rightColWidth, scoreCardHeight, 'Development Score', [34, 197, 94]);
@@ -204,13 +226,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // 7. Distance to Key Amenities - USE CAPTURED IMAGE FROM FRONTEND
   const distanceY = contentY + scoreCardHeight + 3;
-  const distanceCardHeight = 62;
+  let distanceCardHeight = 62; // Default fallback height
 
   if (chartImages?.distance) {
     try {
-      const format = chartImages.distance.includes('image/jpeg') ? 'JPEG' : 'PNG';
-      doc.addImage(chartImages.distance, format, rightColX, distanceY, rightColWidth, distanceCardHeight);
-      console.log('✅ Distance image added to PDF');
+      const imageData = chartImages.distance.data || chartImages.distance;
+      const format = imageData.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      const calculatedHeight = getImageHeight(chartImages.distance, rightColWidth);
+      if (calculatedHeight) distanceCardHeight = calculatedHeight;
+      doc.addImage(imageData, format, rightColX, distanceY, rightColWidth, distanceCardHeight);
+      console.log('✅ Distance image added to PDF with height:', distanceCardHeight);
     } catch (error) {
       console.error('❌ Failed to add distance image:', error);
       drawCard(doc, rightColX, distanceY, rightColWidth, distanceCardHeight, 'Distance to Key Amenities', [59, 130, 246]);

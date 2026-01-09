@@ -75,26 +75,20 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // ==================== HEADER SECTION ====================
 
-  // 1. Logo (top-left) - use local logo.jpg file
+  // 1. Logo (top-left) - use local logo.jpg file (no border)
   const logoPath = path.resolve(__dirname, '../../../../logo.jpg');
   try {
     const logoBuffer = fs.readFileSync(logoPath);
     const logoBase64 = logoBuffer.toString('base64');
-    // Draw logo border (red)
-    doc.setDrawColor(220, 38, 38);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(margin, margin, 38, 14, 1, 1, 'S');
-    doc.addImage(`data:image/jpeg;base64,${logoBase64}`, 'JPEG', margin + 2, margin + 2, 34, 10);
+    // Just add the logo image without any border
+    doc.addImage(`data:image/jpeg;base64,${logoBase64}`, 'JPEG', margin, margin, 45, 12);
   } catch (error) {
     console.error('Failed to load logo:', error);
     // Fallback: Draw text logo
-    doc.setDrawColor(220, 38, 38);
-    doc.setLineWidth(0.5);
-    doc.roundedRect(margin, margin, 38, 14, 1, 1, 'S');
-    doc.setFontSize(10);
+    doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(220, 38, 38);
-    doc.text('GISACCESS', margin + 5, margin + 9);
+    doc.setTextColor(30, 58, 138);
+    doc.text('GISACCESS', margin, margin + 8);
   }
 
   // 2. Title - "Land Survey & Infrastructure Analysis"

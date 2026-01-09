@@ -24,8 +24,7 @@ const __dirname = path.dirname(__filename);
  * 9. Analysis Details (right column)
  */
 export const exportReportPDF = asyncHandler(async (req, res) => {
-  const { surveyResultId, resultData } = req.body;
-  const userId = req.user?.id;
+  const { surveyResultId, resultData, chartImages } = req.body;
 
   if (!surveyResultId) {
     return res.status(400).json({
@@ -37,11 +36,9 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   // Otherwise fall back to fetching from database/store
   let result;
   if (resultData && resultData.poi_breakdown) {
-    // Use the data passed from frontend
     console.log('📄 PDF Export: Using resultData passed from frontend');
     result = resultData;
   } else {
-    // Fall back to fetching from database
     console.log('📄 PDF Export: Fetching result from database for ID:', surveyResultId);
     result = await SurveyResult.findById(surveyResultId);
   }
@@ -52,43 +49,22 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     });
   }
 
-  console.log('📄 PDF Export - Result data:', {
-    id: result.id,
-    village: result.village,
-    hasPOIBreakdown: !!result.poi_breakdown,
-    poiCount: result.poi_breakdown?.length || 0
+  // Log chart images availability
+  console.log('📄 PDF Export - Chart images:', {
+    poiChart: chartImages?.poiChart ? 'provided' : 'missing',
+    ftlChart: chartImages?.ftlChart ? 'provided' : 'missing',
+    map: chartImages?.map ? 'provided' : 'missing',
+    score: chartImages?.score ? 'provided' : 'missing',
+    distance: chartImages?.distance ? 'provided' : 'missing'
   });
 
   // Create PDF - A4 size
   const doc = new jsPDF('p', 'mm', 'a4');
-  const pageWidth = 210;
-  const pageHeight = 297;
   const margin = 8;
   const leftColWidth = 125;
   const rightColWidth = 62;
   const rightColX = margin + leftColWidth + 5;
 
-  // Color palette for POI categories - MUST match frontend exactly
-  const COLORS = [
-    [91, 141, 238],   // #5B8DEE Blue
-    [139, 127, 214],  // #8B7FD6 Purple
-    [231, 76, 60],    // #E74C3C Red
-    [230, 126, 34],   // #E67E22 Orange
-    [243, 156, 18],   // #F39C12 Dark Yellow
-    [241, 196, 15],   // #F1C40F Yellow
-    [212, 225, 87],   // #D4E157 Yellow-Green
-    [156, 204, 101],  // #9CCC65 Light Green
-    [102, 187, 106],  // #66BB6A Green
-    [38, 166, 154],   // #26A69A Teal
-    [77, 208, 225],   // #4DD0E1 Cyan
-    [79, 195, 247],   // #4FC3F7 Light Blue
-    [186, 104, 200],  // #BA68C8 Light Purple
-    [236, 64, 122],   // #EC407A Pink
-    [255, 112, 67],   // #FF7043 Deep Orange
-    [141, 110, 99],   // #8D6E63 Brown
-    [120, 144, 156],  // #78909C Blue Grey
-    [161, 136, 127],  // #A1887F Light Brown
-  ];
 
   // ==================== HEADER SECTION ====================
 
@@ -144,438 +120,110 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // ==================== LEFT COLUMN ====================
 
-  // 3. Nearby Points of Interest Card
+  // 3. Nearby Points of Interest - USE CAPTURED IMAGE FROM FRONTEND
   const poiCardHeight = 95;
-  drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
 
-  // Get POI data - handle both array and empty cases
-  const poiBreakdown = Array.isArray(result.poi_breakdown) ? result.poi_breakdown.slice(0, 10) : [];
-  const totalPois = poiBreakdown.reduce((sum, p) => sum + (p.count || 0), 0) || 1;
-
-  console.log('🎯 POI Section Debug:');
-  console.log('   poi_breakdown raw:', result.poi_breakdown);
-  console.log('   poiBreakdown array:', poiBreakdown);
-  console.log('   poiBreakdown.length:', poiBreakdown.length);
-  console.log('   totalPois:', totalPois);
-
-  // Layout: Donut chart on LEFT (1/3), Legend on RIGHT (2/3) - matching website
-  const chartAreaWidth = leftColWidth / 3;  // ~41mm for chart
-  const chartCenterX = margin + chartAreaWidth / 2 + 5;  // Center of left area
-  const chartCenterY = contentY + 55;
-  const outerRadius = 28;
-  const innerRadius = 16;
-
-  if (poiBreakdown.length > 0) {
-    console.log('   Drawing donut chart at:', chartCenterX, chartCenterY, 'radius:', outerRadius);
-
-    // Draw donut chart using overlapping arcs technique
-    // First draw a full gray background circle
-    doc.setFillColor(229, 231, 235);
-    doc.circle(chartCenterX, chartCenterY, outerRadius, 'F');
-
-    // Draw pie slices by drawing filled wedges
-    let startAngle = -90; // Start from top (12 o'clock position)
-    poiBreakdown.forEach((poi, index) => {
-      const color = COLORS[index % COLORS.length];
-      const count = poi.count || 0;
-      const sweepAngle = (count / totalPois) * 360;
-      console.log(`   Slice ${index}: ${poi.category}, count=${count}, sweep=${sweepAngle.toFixed(1)}deg`);
-
-      if (sweepAngle > 0.5) {
-        // Draw the pie slice
-        doc.setFillColor(color[0], color[1], color[2]);
-
-        // Convert angles to radians
-        const startRad = (startAngle * Math.PI) / 180;
-        const endRad = ((startAngle + sweepAngle) * Math.PI) / 180;
-
-        // Create path points for the wedge
-        const segments = Math.max(Math.ceil(sweepAngle / 5), 3);
-        const angleStep = (endRad - startRad) / segments;
-
-        // Build lines array (relative coordinates)
-        const lines = [];
-
-        // First line: from center to first arc point
-        const firstX = outerRadius * Math.cos(startRad);
-        const firstY = outerRadius * Math.sin(startRad);
-        lines.push([firstX, firstY]);
-
-        // Arc points (relative to previous point)
-        let prevX = chartCenterX + firstX;
-        let prevY = chartCenterY + firstY;
-
-        for (let i = 1; i <= segments; i++) {
-          const angle = startRad + (i * angleStep);
-          const x = chartCenterX + outerRadius * Math.cos(angle);
-          const y = chartCenterY + outerRadius * Math.sin(angle);
-          lines.push([x - prevX, y - prevY]);
-          prevX = x;
-          prevY = y;
-        }
-
-        // Close back to center
-        lines.push([chartCenterX - prevX, chartCenterY - prevY]);
-
-        // Draw filled polygon starting from center
-        doc.lines(lines, chartCenterX, chartCenterY, [1, 1], 'F', true);
-      }
-      startAngle += sweepAngle;
-    });
-
-    // Draw center circle (white) to create donut effect
-    doc.setFillColor(255, 255, 255);
-    doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
-
-    // Total POIs in center of donut
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(31, 41, 55);
-    doc.text(String(totalPois), chartCenterX, chartCenterY, { align: 'center' });
-    doc.setFontSize(6);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(107, 114, 128);
-    doc.text('Total', chartCenterX, chartCenterY + 5, { align: 'center' });
-  } else {
-    // No POI data - draw placeholder
-    doc.setFillColor(229, 231, 235);
-    doc.circle(chartCenterX, chartCenterY, outerRadius, 'F');
-    doc.setFillColor(255, 255, 255);
-    doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
-    doc.setFontSize(7);
-    doc.setTextColor(156, 163, 175);
-    doc.text('No data', chartCenterX, chartCenterY + 2, { align: 'center' });
-  }
-
-  // POI Legend - ON THE RIGHT side of the card, two columns (matching frontend exactly)
-  // Frontend uses grid that fills column 1 first, then column 2
-  const legendStartX = margin + chartAreaWidth + 8;
-  const legendStartY = contentY + 16;
-  const legendCol1X = legendStartX;
-  const legendCol2X = legendStartX + 42;
-  const rowHeight = 8;  // Gap between items
-
-  if (poiBreakdown.length > 0) {
-    // Frontend grid: items go down col1, then col2
-    // With 10 items: col1 gets items 0-4, col2 gets items 5-9
-    const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
-
-    poiBreakdown.forEach((poi, index) => {
-      const color = COLORS[index % COLORS.length];
-      const count = poi.count || 0;
-      const pct = poi.percent !== undefined ? poi.percent : ((count / totalPois) * 100).toFixed(2);
-      const category = poi.category || 'unknown';
-
-      // Determine column and row position (items fill down, then wrap to next column)
-      const isSecondColumn = index >= itemsPerColumn;
-      const rowInColumn = isSecondColumn ? index - itemsPerColumn : index;
-      const colX = isSecondColumn ? legendCol2X : legendCol1X;
-      const y = legendStartY + (rowInColumn * rowHeight);
-
-      // Color dot (rounded circle)
-      doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(colX + 2, y, 2, 'F');
-
-      // Text: "9 (28.13%) retail" - matching frontend exactly
-      // Count (bold, dark gray)
-      doc.setFontSize(7);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(17, 24, 39);  // text-gray-900
-      doc.text(String(count), colX + 6, y + 1);
-
-      // Percentage (gray)
-      const countWidth = doc.getTextWidth(String(count));
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(107, 114, 128);  // text-gray-500
-      doc.text(`(${pct}%)`, colX + 7 + countWidth, y + 1);
-
-      // Category (darker gray)
-      const pctText = `(${pct}%)`;
-      const pctWidth = doc.getTextWidth(pctText);
-      doc.setTextColor(55, 65, 81);  // text-gray-700
-      doc.text(category, colX + 8 + countWidth + pctWidth, y + 1);
-    });
-  } else {
-    // No data message
-    doc.setFontSize(8);
-    doc.setTextColor(156, 163, 175);
-    doc.text('No POI data available', margin + leftColWidth / 2, contentY + 50, { align: 'center' });
-  }
-
-  // 4. FTL Zone Analysis Card
-  const ftlY = contentY + poiCardHeight + 3;
-  const ftlCardHeight = 38;
-  const rawFtlPercentage = result.ftl_zone_percentage || 0;
-  const ftlPercentage = rawFtlPercentage > 9 ? Math.round(rawFtlPercentage) : 0;
-
-  drawCard(doc, margin, ftlY, leftColWidth, ftlCardHeight, 'FTL Zone Analysis', [220, 38, 38]);
-
-  // Subtitle
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  doc.text('Full Tank Level Risk Assessment', margin + 4, ftlY + 14);
-
-  // FTL Percentage display - large text
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(31, 41, 55);
-  doc.text('Chance of falling in FTL zone', margin + 4, ftlY + 22);
-
-  // Large percentage on right
-  doc.setFontSize(24);
-  if (ftlPercentage === 0) {
-    doc.setTextColor(34, 197, 94);
-  } else {
-    doc.setTextColor(239, 68, 68);
-  }
-  doc.text(`${ftlPercentage}%`, margin + leftColWidth - 20, ftlY + 25, { align: 'right' });
-
-  // Risk status
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  if (ftlPercentage === 0) {
-    doc.setTextColor(34, 197, 94);
-    doc.text('No Risk', margin + 4, ftlY + 30);
-  } else {
-    doc.setTextColor(239, 68, 68);
-    doc.text('At Risk', margin + 4, ftlY + 30);
-  }
-
-  // Description
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  const ftlDesc = ftlPercentage === 0
-    ? 'This survey location does not fall within any FTL (Full Tank Level) zones. No water body restrictions apply.'
-    : 'This survey location falls within an FTL zone. Construction restrictions may apply.';
-  const ftlLines = doc.splitTextToSize(ftlDesc, leftColWidth - 8);
-  doc.text(ftlLines, margin + 4, ftlY + 35);
-
-  // 5. Survey Location Map Card
-  const mapY = ftlY + ftlCardHeight + 3;
-  const mapCardHeight = 115;
-
-  drawCard(doc, margin, mapY, leftColWidth, mapCardHeight, 'Survey Location Map', [59, 130, 246]);
-
-  // Map subtitle
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  doc.text('10-minute walking radius with POIs and amenities', margin + 4, mapY + 14);
-
-  // Generate and embed Mapbox Static Image
-  if (result.latitude && result.longitude) {
-    const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
-    const lat = result.latitude;
-    const lon = result.longitude;
-
-    if (MAPBOX_TOKEN) {
-      let overlays = [];
-      overlays.push(`pin-l+ef4444(${lon},${lat})`);
-
-      if (result.map_data?.nearest_police) {
-        overlays.push(`pin-s-police+3b82f6(${result.map_data.nearest_police.lon},${result.map_data.nearest_police.lat})`);
-      }
-      if (result.map_data?.nearest_hospital) {
-        overlays.push(`pin-s-hospital+ef4444(${result.map_data.nearest_hospital.lon},${result.map_data.nearest_hospital.lat})`);
-      }
-      if (result.map_data?.nearest_road) {
-        overlays.push(`pin-s-car+22c55e(${result.map_data.nearest_road.lon},${result.map_data.nearest_road.lat})`);
-      }
-
-      const overlayString = overlays.join(',');
-      const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${overlayString}/${lon},${lat},13,0/600x400?access_token=${MAPBOX_TOKEN}`;
-
-      try {
-        console.log('🗺️  Fetching Mapbox static image for PDF...');
-        const mapResponse = await fetch(mapUrl);
-        const contentType = mapResponse.headers.get('content-type');
-
-        if (mapResponse.ok && contentType && contentType.startsWith('image/')) {
-          const mapImageBuffer = await mapResponse.arrayBuffer();
-          const mapImageBase64 = Buffer.from(mapImageBuffer).toString('base64');
-          doc.addImage(`data:image/png;base64,${mapImageBase64}`, 'PNG', margin + 2, mapY + 18, leftColWidth - 4, 80);
-          console.log('✅ Map image added to PDF');
-        } else {
-          throw new Error(`Invalid response: ${contentType || mapResponse.status}`);
-        }
-      } catch (error) {
-        console.error('❌ Failed to fetch map image:', error.message);
-        drawMapPlaceholder(doc, margin + 2, mapY + 18, leftColWidth - 4, 80);
-      }
-    } else {
-      drawMapPlaceholder(doc, margin + 2, mapY + 18, leftColWidth - 4, 80);
+  if (chartImages?.poiChart) {
+    // Use the exact image captured from frontend
+    try {
+      doc.addImage(chartImages.poiChart, 'PNG', margin, contentY, leftColWidth, poiCardHeight);
+      console.log('✅ POI chart image added to PDF');
+    } catch (error) {
+      console.error('❌ Failed to add POI chart image:', error);
+      drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
+      doc.setFontSize(8);
+      doc.setTextColor(156, 163, 175);
+      doc.text('Chart image unavailable', margin + leftColWidth / 2, contentY + 50, { align: 'center' });
     }
   } else {
-    drawMapPlaceholder(doc, margin + 2, mapY + 18, leftColWidth - 4, 80);
+    // Fallback: draw placeholder card
+    drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
+    doc.setFontSize(8);
+    doc.setTextColor(156, 163, 175);
+    doc.text('Chart image not provided', margin + leftColWidth / 2, contentY + 50, { align: 'center' });
   }
 
-  // Map Legend
-  const mapLegendY = mapY + 100;
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(55, 65, 81);
-  doc.text('Map Legend:', margin + 4, mapLegendY);
+  // 4. FTL Zone Analysis - USE CAPTURED IMAGE FROM FRONTEND
+  const ftlY = contentY + poiCardHeight + 3;
+  const ftlCardHeight = 50;
 
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
+  if (chartImages?.ftlChart) {
+    try {
+      doc.addImage(chartImages.ftlChart, 'PNG', margin, ftlY, leftColWidth, ftlCardHeight);
+      console.log('✅ FTL chart image added to PDF');
+    } catch (error) {
+      console.error('❌ Failed to add FTL chart image:', error);
+      drawCard(doc, margin, ftlY, leftColWidth, ftlCardHeight, 'FTL Zone Analysis', [220, 38, 38]);
+    }
+  } else {
+    drawCard(doc, margin, ftlY, leftColWidth, ftlCardHeight, 'FTL Zone Analysis', [220, 38, 38]);
+  }
 
-  // Legend items in a row
-  let legendX = margin + 25;
-  // Survey Location
-  doc.setFillColor(239, 68, 68);
-  doc.circle(legendX, mapLegendY - 1, 2, 'F');
-  doc.setTextColor(55, 65, 81);
-  doc.text('Survey Location', legendX + 4, mapLegendY);
+  // 5. Survey Location Map - USE CAPTURED IMAGE FROM FRONTEND
+  const mapY = ftlY + ftlCardHeight + 3;
+  const mapCardHeight = 100;
 
-  // 10-min Walk Area
-  legendX += 30;
-  doc.setDrawColor(147, 51, 234);
-  doc.setLineWidth(0.5);
-  doc.line(legendX - 3, mapLegendY - 1, legendX + 3, mapLegendY - 1);
-  doc.text('10-min Walk Area', legendX + 5, mapLegendY);
-
-  // Police Station
-  legendX += 30;
-  doc.setFillColor(59, 130, 246);
-  doc.circle(legendX, mapLegendY - 1, 2, 'F');
-  doc.text('Police Station', legendX + 4, mapLegendY);
-
-  // Hospital
-  legendX += 25;
-  doc.setFillColor(239, 68, 68);
-  doc.circle(legendX, mapLegendY - 1, 2, 'F');
-  doc.text('Hospital', legendX + 4, mapLegendY);
-
-  // Second legend row
-  const mapLegendY2 = mapLegendY + 6;
-  legendX = margin + 25;
-  doc.setFillColor(34, 197, 94);
-  doc.circle(legendX, mapLegendY2 - 1, 2, 'F');
-  doc.text('Main Road', legendX + 4, mapLegendY2);
-
-  legendX += 25;
-  doc.setFillColor(168, 85, 247);
-  doc.circle(legendX, mapLegendY2 - 1, 2, 'F');
-  doc.text('POIs (colored by category)', legendX + 4, mapLegendY2);
-
-  legendX += 40;
-  doc.setFillColor(37, 99, 235);
-  doc.rect(legendX - 2, mapLegendY2 - 3, 6, 4, 'F');
-  doc.text('FTL Zone (Tank Area)', legendX + 6, mapLegendY2);
+  if (chartImages?.map) {
+    try {
+      doc.addImage(chartImages.map, 'PNG', margin, mapY, leftColWidth, mapCardHeight);
+      console.log('✅ Map image added to PDF');
+    } catch (error) {
+      console.error('❌ Failed to add map image:', error);
+      drawCard(doc, margin, mapY, leftColWidth, mapCardHeight, 'Survey Location Map', [59, 130, 246]);
+    }
+  } else {
+    drawCard(doc, margin, mapY, leftColWidth, mapCardHeight, 'Survey Location Map', [59, 130, 246]);
+  }
 
   // ==================== RIGHT COLUMN ====================
 
-  // 6. Development Score Card (with green header)
-  const devScore = result.development_score || 0;
-  const scoreCardHeight = 85;
+  // 6. Development Score - USE CAPTURED IMAGE FROM FRONTEND
+  const scoreCardHeight = 95;
 
-  // Card background
-  doc.setFillColor(255, 255, 255);
-  doc.setDrawColor(229, 231, 235);
-  doc.roundedRect(rightColX, contentY, rightColWidth, scoreCardHeight, 2, 2, 'FD');
+  if (chartImages?.score) {
+    try {
+      doc.addImage(chartImages.score, 'PNG', rightColX, contentY, rightColWidth, scoreCardHeight);
+      console.log('✅ Score image added to PDF');
+    } catch (error) {
+      console.error('❌ Failed to add score image:', error);
+      drawCard(doc, rightColX, contentY, rightColWidth, scoreCardHeight, 'Development Score', [34, 197, 94]);
+      doc.setFontSize(8);
+      doc.setTextColor(156, 163, 175);
+      doc.text('Score image unavailable', rightColX + rightColWidth / 2, contentY + 50, { align: 'center' });
+    }
+  } else {
+    drawCard(doc, rightColX, contentY, rightColWidth, scoreCardHeight, 'Development Score', [34, 197, 94]);
+    doc.setFontSize(8);
+    doc.setTextColor(156, 163, 175);
+    doc.text('Score image not provided', rightColX + rightColWidth / 2, contentY + 50, { align: 'center' });
+  }
 
-  // Green header
-  doc.setFillColor(34, 197, 94); // Green
-  doc.roundedRect(rightColX, contentY, rightColWidth, 12, 2, 2, 'F');
-  // Cover bottom corners of header
-  doc.rect(rightColX, contentY + 8, rightColWidth, 4, 'F');
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(255, 255, 255);
-  doc.text('Development Score', rightColX + 4, contentY + 8);
-
-  // Subtitle
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(255, 255, 255);
-  doc.text('Overall location quality assessment', rightColX + 4, contentY + 11);
-
-  // Score circle
-  const scoreCenterX = rightColX + rightColWidth / 2;
-  const scoreCenterY = contentY + 30;
-  const scoreRadius = 14;
-
-  // Background circle
-  doc.setFillColor(220, 252, 231); // Light green
-  doc.circle(scoreCenterX, scoreCenterY, scoreRadius, 'F');
-
-  // Score text
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(22, 163, 74); // Green
-  doc.text(String(devScore), scoreCenterX, scoreCenterY + 2, { align: 'center' });
-
-  // "out of 100"
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  doc.text('out of 100', scoreCenterX, scoreCenterY + 8, { align: 'center' });
-
-  // Score level
-  const scoreLevel = devScore >= 80 ? 'Excellent' : devScore >= 60 ? 'Good' : devScore >= 40 ? 'Average' : 'Needs Improvement';
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(22, 163, 74);
-  doc.text(scoreLevel, scoreCenterX, scoreCenterY + 14, { align: 'center' });
-
-  // Score Breakdown section
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(31, 41, 55);
-  doc.text('Score Breakdown:', rightColX + 4, contentY + 52);
-
-  const breakdown = result.score_breakdown || {};
-  const breakdownItems = [
-    { label: 'POI Count & Diversity', score: breakdown.poi_score || 0, max: 30 },
-    { label: 'Proximity to Amenities', score: breakdown.amenity_score || 0, max: 25 },
-    { label: 'FTL Zone Safety', score: breakdown.ftl_score || 0, max: 20 },
-    { label: 'Supportive Businesses', score: breakdown.business_score || 0, max: 15 },
-    { label: 'Overall Accessibility', score: breakdown.accessibility_score || 0, max: 10 }
-  ];
-
-  let breakdownY = contentY + 58;
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-
-  breakdownItems.forEach(item => {
-    doc.setTextColor(55, 65, 81);
-    doc.text(item.label, rightColX + 4, breakdownY);
-    doc.setTextColor(34, 197, 94);
-    const scoreText = typeof item.score === 'number' ? item.score.toFixed(1) : '0.0';
-    doc.text(`${scoreText}/${item.max}`, rightColX + rightColWidth - 4, breakdownY, { align: 'right' });
-    breakdownY += 5;
-  });
-
-  // 7. Distance to Key Amenities Card
+  // 7. Distance to Key Amenities - USE CAPTURED IMAGE FROM FRONTEND
   const distanceY = contentY + scoreCardHeight + 3;
   const distanceCardHeight = 62;
 
-  drawCard(doc, rightColX, distanceY, rightColWidth, distanceCardHeight, 'Distance to Key Amenities', [59, 130, 246]);
-
-  // Subtitle
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  doc.text('Nearest facilities from survey location', rightColX + 4, distanceY + 13);
-
-  // Police Station row
-  const policeDist = result.distance_to_police || 0;
-  drawDistanceRow(doc, rightColX + 3, distanceY + 18, rightColWidth - 6, 'Police Station', policeDist, [219, 234, 254], [59, 130, 246]);
-
-  // Hospital row
-  const hospitalDist = result.distance_to_hospital || 0;
-  drawDistanceRow(doc, rightColX + 3, distanceY + 32, rightColWidth - 6, 'Hospital', hospitalDist, [254, 226, 226], [239, 68, 68]);
-
-  // Main Road row
-  const roadDist = result.distance_to_main_road || 0;
-  drawDistanceRow(doc, rightColX + 3, distanceY + 46, rightColWidth - 6, 'Main Road', roadDist, [220, 252, 231], [34, 197, 94]);
+  if (chartImages?.distance) {
+    try {
+      doc.addImage(chartImages.distance, 'PNG', rightColX, distanceY, rightColWidth, distanceCardHeight);
+      console.log('✅ Distance image added to PDF');
+    } catch (error) {
+      console.error('❌ Failed to add distance image:', error);
+      drawCard(doc, rightColX, distanceY, rightColWidth, distanceCardHeight, 'Distance to Key Amenities', [59, 130, 246]);
+      doc.setFontSize(8);
+      doc.setTextColor(156, 163, 175);
+      doc.text('Distance image unavailable', rightColX + rightColWidth / 2, distanceY + 35, { align: 'center' });
+    }
+  } else {
+    drawCard(doc, rightColX, distanceY, rightColWidth, distanceCardHeight, 'Distance to Key Amenities', [59, 130, 246]);
+    doc.setFontSize(8);
+    doc.setTextColor(156, 163, 175);
+    doc.text('Distance image not provided', rightColX + rightColWidth / 2, distanceY + 35, { align: 'center' });
+  }
 
   // 8. Location Insights Card
   const insightsY = distanceY + distanceCardHeight + 3;
   const insightsCardHeight = 45;
+  const devScore = result.development_score || 0;
 
   drawCard(doc, rightColX, insightsY, rightColWidth, insightsCardHeight, 'Location Insights', [168, 85, 247]);
 
@@ -672,70 +320,4 @@ function drawCard(doc, x, y, width, height, title, headerColor) {
   doc.setLineWidth(0.2);
 }
 
-/**
- * Draw distance row with icon and values
- */
-function drawDistanceRow(doc, x, y, width, label, distance, bgColor, iconColor) {
-  const rowHeight = 12;
-
-  // Background
-  doc.setFillColor(bgColor[0], bgColor[1], bgColor[2]);
-  doc.roundedRect(x, y, width, rowHeight, 1.5, 1.5, 'F');
-
-  // Icon circle
-  doc.setFillColor(iconColor[0], iconColor[1], iconColor[2]);
-  doc.circle(x + 6, y + rowHeight / 2, 4, 'F');
-
-  // Icon text (use letter)
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'bold');
-  const iconLetter = label === 'Police Station' ? 'P' : label === 'Hospital' ? 'H' : 'R';
-  doc.text(iconLetter, x + 4.5, y + rowHeight / 2 + 1.5);
-
-  // Label
-  doc.setTextColor(107, 114, 128);
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.text(label, x + 13, y + 4);
-
-  // Distance value
-  doc.setTextColor(31, 41, 55);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  const distStr = String(distance);
-  doc.text(distStr, x + 13, y + 10);
-
-  // "km" label
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(107, 114, 128);
-  const distWidth = doc.getTextWidth(distStr);
-  doc.text('km', x + 14 + distWidth, y + 10);
-
-  // Right side - Distance in meters
-  doc.setTextColor(107, 114, 128);
-  doc.setFontSize(5);
-  doc.text('Distance', x + width - 12, y + 4);
-  doc.setTextColor(55, 65, 81);
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'bold');
-  const meters = Math.round(distance * 1000);
-  doc.text(`${meters}m`, x + width - 12, y + 9);
-}
-
-/**
- * Draw map placeholder when map is unavailable
- */
-function drawMapPlaceholder(doc, x, y, width, height) {
-  doc.setFillColor(243, 244, 246);
-  doc.rect(x, y, width, height, 'F');
-
-  doc.setTextColor(156, 163, 175);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Map unavailable', x + width / 2, y + height / 2, { align: 'center' });
-  doc.setFontSize(7);
-  doc.text('(Mapbox API error or token not configured)', x + width / 2, y + height / 2 + 8, { align: 'center' });
-}
 

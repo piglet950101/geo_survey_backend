@@ -68,26 +68,26 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const rightColWidth = 62;
   const rightColX = margin + leftColWidth + 5;
 
-  // Color palette for POI categories
+  // Color palette for POI categories - MUST match frontend exactly
   const COLORS = [
-    [139, 92, 246],   // purple
-    [59, 130, 246],   // blue
-    [236, 72, 153],   // pink
-    [249, 115, 22],   // orange
-    [234, 179, 8],    // yellow
-    [132, 204, 22],   // lime
-    [34, 197, 94],    // green
-    [20, 184, 166],   // teal
-    [6, 182, 212],    // cyan
-    [99, 102, 241],   // indigo
-    [168, 85, 247],   // violet
-    [217, 70, 239],   // fuchsia
-    [244, 63, 94],    // rose
-    [239, 68, 68],    // red
-    [251, 146, 60],   // amber
-    [163, 230, 53],   // light green
-    [45, 212, 191],   // emerald
-    [56, 189, 248],   // sky
+    [91, 141, 238],   // #5B8DEE Blue
+    [139, 127, 214],  // #8B7FD6 Purple
+    [231, 76, 60],    // #E74C3C Red
+    [230, 126, 34],   // #E67E22 Orange
+    [243, 156, 18],   // #F39C12 Dark Yellow
+    [241, 196, 15],   // #F1C40F Yellow
+    [212, 225, 87],   // #D4E157 Yellow-Green
+    [156, 204, 101],  // #9CCC65 Light Green
+    [102, 187, 106],  // #66BB6A Green
+    [38, 166, 154],   // #26A69A Teal
+    [77, 208, 225],   // #4DD0E1 Cyan
+    [79, 195, 247],   // #4FC3F7 Light Blue
+    [186, 104, 200],  // #BA68C8 Light Purple
+    [236, 64, 122],   // #EC407A Pink
+    [255, 112, 67],   // #FF7043 Deep Orange
+    [141, 110, 99],   // #8D6E63 Brown
+    [120, 144, 156],  // #78909C Blue Grey
+    [161, 136, 127],  // #A1887F Light Brown
   ];
 
   // ==================== HEADER SECTION ====================
@@ -248,67 +248,52 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   }
 
   // POI Legend - ON THE RIGHT side of the card, two columns (matching frontend exactly)
-  const legendStartX = margin + chartAreaWidth + 8;  // Start after chart area
+  // Frontend uses grid that fills column 1 first, then column 2
+  const legendStartX = margin + chartAreaWidth + 8;
   const legendStartY = contentY + 16;
   const legendCol1X = legendStartX;
-  const legendCol2X = legendStartX + 45;  // Second column
+  const legendCol2X = legendStartX + 42;
+  const rowHeight = 8;  // Gap between items
 
   if (poiBreakdown.length > 0) {
+    // Frontend grid: items go down col1, then col2
+    // With 10 items: col1 gets items 0-4, col2 gets items 5-9
     const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
 
-    // Left column of legend (first half of items)
-    poiBreakdown.slice(0, itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 8);  // Tighter spacing like frontend
+    poiBreakdown.forEach((poi, index) => {
       const color = COLORS[index % COLORS.length];
-
-      // Color dot
-      doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol1X + 2, y, 2, 'F');
-
-      // Format exactly like frontend: "9 (28.13%) retail" on single line
       const count = poi.count || 0;
       const pct = poi.percent !== undefined ? poi.percent : ((count / totalPois) * 100).toFixed(2);
       const category = poi.category || 'unknown';
 
-      // Count (bold black)
-      doc.setFontSize(7);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(31, 41, 55);
-      doc.text(String(count), legendCol1X + 6, y + 1);
+      // Determine column and row position (items fill down, then wrap to next column)
+      const isSecondColumn = index >= itemsPerColumn;
+      const rowInColumn = isSecondColumn ? index - itemsPerColumn : index;
+      const colX = isSecondColumn ? legendCol2X : legendCol1X;
+      const y = legendStartY + (rowInColumn * rowHeight);
 
-      // Percentage (gray) and category (gray)
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(107, 114, 128);
-      const countWidth = doc.getTextWidth(String(count));
-      doc.text(`(${pct}%) ${category}`, legendCol1X + 6 + countWidth + 1, y + 1);
-    });
-
-    // Right column of legend (second half of items)
-    poiBreakdown.slice(itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 8);  // Tighter spacing like frontend
-      const colorIndex = itemsPerColumn + index;
-      const color = COLORS[colorIndex % COLORS.length];
-
-      // Color dot
+      // Color dot (rounded circle)
       doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol2X + 2, y, 2, 'F');
+      doc.circle(colX + 2, y, 2, 'F');
 
-      // Format exactly like frontend: "9 (28.13%) retail" on single line
-      const count = poi.count || 0;
-      const pct = poi.percent !== undefined ? poi.percent : ((count / totalPois) * 100).toFixed(2);
-      const category = poi.category || 'unknown';
-
-      // Count (bold black)
+      // Text: "9 (28.13%) retail" - matching frontend exactly
+      // Count (bold, dark gray)
       doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(31, 41, 55);
-      doc.text(String(count), legendCol2X + 6, y + 1);
+      doc.setTextColor(17, 24, 39);  // text-gray-900
+      doc.text(String(count), colX + 6, y + 1);
 
-      // Percentage (gray) and category (gray)
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(107, 114, 128);
+      // Percentage (gray)
       const countWidth = doc.getTextWidth(String(count));
-      doc.text(`(${pct}%) ${category}`, legendCol2X + 6 + countWidth + 1, y + 1);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(107, 114, 128);  // text-gray-500
+      doc.text(`(${pct}%)`, colX + 7 + countWidth, y + 1);
+
+      // Category (darker gray)
+      const pctText = `(${pct}%)`;
+      const pctWidth = doc.getTextWidth(pctText);
+      doc.setTextColor(55, 65, 81);  // text-gray-700
+      doc.text(category, colX + 8 + countWidth + pctWidth, y + 1);
     });
   } else {
     // No data message

@@ -76,14 +76,33 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   // ==================== HEADER SECTION ====================
 
   // 1. Logo (top-left) - use local logo.jpg file (no border)
-  const logoPath = path.resolve(__dirname, '../../../../logo.jpg');
-  try {
-    const logoBuffer = fs.readFileSync(logoPath);
-    const logoBase64 = logoBuffer.toString('base64');
-    // Just add the logo image without any border
-    doc.addImage(`data:image/jpeg;base64,${logoBase64}`, 'JPEG', margin, margin, 45, 12);
-  } catch (error) {
-    console.error('Failed to load logo:', error);
+  // Try multiple paths to find the logo (logo.jpg should be in backend folder)
+  const possiblePaths = [
+    path.resolve(process.cwd(), 'logo.jpg'),           // Backend root folder (deployed)
+    path.resolve(__dirname, '../../logo.jpg'),         // From controllers -> src -> backend
+    path.resolve(__dirname, '../../../logo.jpg'),      // One more level up
+    path.resolve(process.cwd(), '../logo.jpg'),        // Project root
+  ];
+
+  let logoLoaded = false;
+  for (const logoPath of possiblePaths) {
+    try {
+      if (fs.existsSync(logoPath)) {
+        console.log('📷 Loading logo from:', logoPath);
+        const logoBuffer = fs.readFileSync(logoPath);
+        const logoBase64 = logoBuffer.toString('base64');
+        doc.addImage(`data:image/jpeg;base64,${logoBase64}`, 'JPEG', margin, margin, 45, 12);
+        logoLoaded = true;
+        console.log('✅ Logo loaded successfully');
+        break;
+      }
+    } catch (error) {
+      console.error('Failed to load logo from', logoPath, ':', error.message);
+    }
+  }
+
+  if (!logoLoaded) {
+    console.error('❌ Could not load logo from any path. Tried:', possiblePaths);
     // Fallback: Draw text logo
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');

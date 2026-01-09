@@ -131,85 +131,118 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const poiCardHeight = 95;
   drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
 
-  // Draw Donut Chart using circles (simpler approach)
-  const chartCenterX = margin + 35;
-  const chartCenterY = contentY + 50;
-  const outerRadius = 28;
-  const innerRadius = 16;
+  // Debug: Log POI data
+  console.log('📊 POI Breakdown for PDF:', JSON.stringify(result.poi_breakdown, null, 2));
+  console.log('📊 Total POIs:', result.total_pois);
 
-  const poiBreakdown = (result.poi_breakdown || []).slice(0, 18);
-  const totalPois = poiBreakdown.reduce((sum, p) => sum + p.count, 0) || 1;
+  // Get POI data - handle both array and empty cases
+  const poiBreakdown = Array.isArray(result.poi_breakdown) ? result.poi_breakdown.slice(0, 10) : [];
+  const totalPois = poiBreakdown.reduce((sum, p) => sum + (p.count || 0), 0) || 1;
 
-  // Draw donut segments using pie slices
-  let startAngle = -90; // Start from top
-  poiBreakdown.forEach((poi, index) => {
-    const color = COLORS[index % COLORS.length];
-    const sweepAngle = (poi.count / totalPois) * 360;
-    if (sweepAngle > 0) {
-      drawPieSlice(doc, chartCenterX, chartCenterY, outerRadius, startAngle, sweepAngle, color);
-    }
-    startAngle += sweepAngle;
-  });
+  console.log('📊 POI Breakdown length:', poiBreakdown.length);
+  console.log('📊 Total POIs calculated:', totalPois);
 
-  // Draw center circle (white) to create donut effect
-  doc.setFillColor(255, 255, 255);
-  doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
+  // Draw Donut Chart
+  const chartCenterX = margin + 40;
+  const chartCenterY = contentY + 55;
+  const outerRadius = 25;
+  const innerRadius = 14;
 
-  // POI Legend - Two columns on right side of donut
-  doc.setFontSize(6);
-  const legendStartX = margin + 68;
+  if (poiBreakdown.length > 0) {
+    // Draw donut segments using pie slices
+    let startAngle = -90; // Start from top
+    poiBreakdown.forEach((poi, index) => {
+      const color = COLORS[index % COLORS.length];
+      const count = poi.count || 0;
+      const sweepAngle = (count / totalPois) * 360;
+      console.log(`  Drawing slice ${index}: ${poi.category}, count=${count}, sweep=${sweepAngle.toFixed(1)}°`);
+      if (sweepAngle > 0.5) { // Only draw if angle is significant
+        drawPieSlice(doc, chartCenterX, chartCenterY, outerRadius, startAngle, sweepAngle, color);
+      }
+      startAngle += sweepAngle;
+    });
+
+    // Draw center circle (white) to create donut effect
+    doc.setFillColor(255, 255, 255);
+    doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
+  } else {
+    // No POI data - draw placeholder
+    doc.setFillColor(229, 231, 235);
+    doc.circle(chartCenterX, chartCenterY, outerRadius, 'F');
+    doc.setFillColor(255, 255, 255);
+    doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
+    doc.setFontSize(7);
+    doc.setTextColor(156, 163, 175);
+    doc.text('No data', chartCenterX, chartCenterY + 2, { align: 'center' });
+  }
+
+  // POI Legend - Below the donut chart, two columns
   const legendStartY = contentY + 15;
-  const midPoint = Math.ceil(poiBreakdown.length / 2);
+  const legendCol1X = margin + 5;
+  const legendCol2X = margin + 65;
 
-  // Left legend column
-  poiBreakdown.slice(0, midPoint).forEach((poi, index) => {
-    const y = legendStartY + (index * 8);
-    const color = COLORS[index % COLORS.length];
+  if (poiBreakdown.length > 0) {
+    doc.setFontSize(7);
+    const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
 
-    // Color dot
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.circle(legendStartX, y, 1.5, 'F');
+    // Left column items
+    poiBreakdown.slice(0, itemsPerColumn).forEach((poi, index) => {
+      const y = legendStartY + (index * 9);
+      const color = COLORS[index % COLORS.length];
 
-    // Count and percentage
-    doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold');
-    doc.text(String(poi.count), legendStartX + 4, y + 1);
+      // Color dot
+      doc.setFillColor(color[0], color[1], color[2]);
+      doc.circle(legendCol1X + 2, y, 2, 'F');
 
-    doc.setTextColor(107, 114, 128);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`(${poi.percent}%)`, legendStartX + 12, y + 1);
+      // Count (bold)
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('helvetica', 'bold');
+      doc.text(String(poi.count || 0), legendCol1X + 7, y + 1);
 
-    // Category name
-    doc.setTextColor(55, 65, 81);
-    const catName = formatCategoryName(poi.category);
-    doc.text(catName.substring(0, 18), legendStartX + 24, y + 1);
-  });
+      // Percentage (gray)
+      doc.setTextColor(107, 114, 128);
+      doc.setFont('helvetica', 'normal');
+      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(2);
+      doc.text(`(${pct}%)`, legendCol1X + 14, y + 1);
 
-  // Right legend column
-  poiBreakdown.slice(midPoint).forEach((poi, index) => {
-    const y = legendStartY + (index * 8);
-    const colorIndex = midPoint + index;
-    const color = COLORS[colorIndex % COLORS.length];
-    const colX = legendStartX + 58;
+      // Category name
+      doc.setTextColor(55, 65, 81);
+      const catName = formatCategoryName(poi.category || 'unknown');
+      doc.text(catName.substring(0, 20), legendCol1X + 28, y + 1);
+    });
 
-    // Color dot
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.circle(colX, y, 1.5, 'F');
+    // Right column items
+    poiBreakdown.slice(itemsPerColumn).forEach((poi, index) => {
+      const y = legendStartY + (index * 9);
+      const colorIndex = itemsPerColumn + index;
+      const color = COLORS[colorIndex % COLORS.length];
 
-    // Count and percentage
-    doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold');
-    doc.text(String(poi.count), colX + 4, y + 1);
+      // Color dot
+      doc.setFillColor(color[0], color[1], color[2]);
+      doc.circle(legendCol2X + 2, y, 2, 'F');
 
-    doc.setTextColor(107, 114, 128);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`(${poi.percent}%)`, colX + 12, y + 1);
+      // Count (bold)
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('helvetica', 'bold');
+      doc.text(String(poi.count || 0), legendCol2X + 7, y + 1);
 
-    // Category name
-    doc.setTextColor(55, 65, 81);
-    const catName = formatCategoryName(poi.category);
-    doc.text(catName.substring(0, 18), colX + 24, y + 1);
-  });
+      // Percentage (gray)
+      doc.setTextColor(107, 114, 128);
+      doc.setFont('helvetica', 'normal');
+      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(2);
+      doc.text(`(${pct}%)`, legendCol2X + 14, y + 1);
+
+      // Category name
+      doc.setTextColor(55, 65, 81);
+      const catName = formatCategoryName(poi.category || 'unknown');
+      doc.text(catName.substring(0, 20), legendCol2X + 28, y + 1);
+    });
+  } else {
+    // No data message
+    doc.setFontSize(8);
+    doc.setTextColor(156, 163, 175);
+    doc.text('No POI data available', margin + leftColWidth / 2, contentY + 50, { align: 'center' });
+  }
 
   // 4. FTL Zone Analysis Card
   const ftlY = contentY + poiCardHeight + 3;

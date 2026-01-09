@@ -1,6 +1,13 @@
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { jsPDF } from 'jspdf';
 import { SurveyResult } from '../models/SurveyResult.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get directory path for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Export Report PDF
@@ -68,19 +75,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   // ==================== HEADER SECTION ====================
 
-  // 1. Logo (top-left) - with red border like in image
-  const logoUrl = 'https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/68e4844ed620b4351643b737/8903325f1_GISACCESS_LOGO1.png';
+  // 1. Logo (top-left) - use local logo.jpg file
+  const logoPath = path.resolve(__dirname, '../../../../logo.jpg');
   try {
-    const logoResponse = await fetch(logoUrl);
-    if (logoResponse.ok) {
-      const logoBuffer = await logoResponse.arrayBuffer();
-      const logoBase64 = Buffer.from(logoBuffer).toString('base64');
-      // Draw logo border (red)
-      doc.setDrawColor(220, 38, 38);
-      doc.setLineWidth(0.5);
-      doc.roundedRect(margin, margin, 38, 14, 1, 1, 'S');
-      doc.addImage(`data:image/png;base64,${logoBase64}`, 'PNG', margin + 2, margin + 2, 34, 10);
-    }
+    const logoBuffer = fs.readFileSync(logoPath);
+    const logoBase64 = logoBuffer.toString('base64');
+    // Draw logo border (red)
+    doc.setDrawColor(220, 38, 38);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(margin, margin, 38, 14, 1, 1, 'S');
+    doc.addImage(`data:image/jpeg;base64,${logoBase64}`, 'JPEG', margin + 2, margin + 2, 34, 10);
   } catch (error) {
     console.error('Failed to load logo:', error);
     // Fallback: Draw text logo

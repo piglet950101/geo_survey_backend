@@ -126,7 +126,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   if (chartImages?.poiChart) {
     // Use the exact image captured from frontend
     try {
-      doc.addImage(chartImages.poiChart, 'PNG', margin, contentY, leftColWidth, poiCardHeight);
+      const format = chartImages.poiChart.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      doc.addImage(chartImages.poiChart, format, margin, contentY, leftColWidth, poiCardHeight);
       console.log('✅ POI chart image added to PDF');
     } catch (error) {
       console.error('❌ Failed to add POI chart image:', error);
@@ -149,7 +150,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   if (chartImages?.ftlChart) {
     try {
-      doc.addImage(chartImages.ftlChart, 'PNG', margin, ftlY, leftColWidth, ftlCardHeight);
+      const format = chartImages.ftlChart.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      doc.addImage(chartImages.ftlChart, format, margin, ftlY, leftColWidth, ftlCardHeight);
       console.log('✅ FTL chart image added to PDF');
     } catch (error) {
       console.error('❌ Failed to add FTL chart image:', error);
@@ -165,7 +167,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   if (chartImages?.map) {
     try {
-      doc.addImage(chartImages.map, 'PNG', margin, mapY, leftColWidth, mapCardHeight);
+      const format = chartImages.map.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      doc.addImage(chartImages.map, format, margin, mapY, leftColWidth, mapCardHeight);
       console.log('✅ Map image added to PDF');
     } catch (error) {
       console.error('❌ Failed to add map image:', error);
@@ -182,7 +185,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   if (chartImages?.score) {
     try {
-      doc.addImage(chartImages.score, 'PNG', rightColX, contentY, rightColWidth, scoreCardHeight);
+      const format = chartImages.score.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      doc.addImage(chartImages.score, format, rightColX, contentY, rightColWidth, scoreCardHeight);
       console.log('✅ Score image added to PDF');
     } catch (error) {
       console.error('❌ Failed to add score image:', error);
@@ -204,7 +208,8 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
 
   if (chartImages?.distance) {
     try {
-      doc.addImage(chartImages.distance, 'PNG', rightColX, distanceY, rightColWidth, distanceCardHeight);
+      const format = chartImages.distance.includes('image/jpeg') ? 'JPEG' : 'PNG';
+      doc.addImage(chartImages.distance, format, rightColX, distanceY, rightColWidth, distanceCardHeight);
       console.log('✅ Distance image added to PDF');
     } catch (error) {
       console.error('❌ Failed to add distance image:', error);

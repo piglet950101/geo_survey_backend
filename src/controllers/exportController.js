@@ -174,7 +174,7 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setTextColor(107, 114, 128);
   doc.text('Note: FTL zones indicate areas within tank/water body jurisdictions where construction restrictions apply.', 15, ftlY + 38);
 
-  // Survey Location Map (Left Column, bottom) - Placeholder for now
+  // Survey Location Map (Left Column, bottom)
   let mapY = ftlY + 50;
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(10, mapY, 125, 95, 2, 2, 'F');
@@ -191,10 +191,108 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setTextColor(107, 114, 128);
   doc.text('10-minute walking radius with POIs and amenities', 15, mapY + 14);
   
-  // Map placeholder (will be implemented with Mapbox static image)
-  doc.setTextColor(156, 163, 175);
-  doc.setFontSize(10);
-  doc.text('Map will be rendered here', 72.5, mapY + 50, { align: 'center' });
+  // Generate Mapbox Static Image
+  if (result.map_data && result.latitude && result.longitude) {
+    const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
+    const lat = result.latitude;
+    const lon = result.longitude;
+    
+    if (MAPBOX_TOKEN) {
+      // Build markers overlay
+      let overlays = [];
+      // Survey location (red large pin)
+      overlays.push(`pin-l+ff0000(${lon},${lat})`);
+      
+      // Add amenity markers if available
+      if (result.map_data.nearest_police) {
+        overlays.push(`pin-s-embassy+3b82f6(${result.map_data.nearest_police.lon},${result.map_data.nearest_police.lat})`);
+      }
+      if (result.map_data.nearest_hospital) {
+        overlays.push(`pin-s-hospital+ef4444(${result.map_data.nearest_hospital.lon},${result.map_data.nearest_hospital.lat})`);
+      }
+      if (result.map_data.nearest_road) {
+        overlays.push(`pin-s-marker+22c55e(${result.map_data.nearest_road.lon},${result.map_data.nearest_road.lat})`);
+      }
+      
+      const overlayString = overlays.join(',');
+      // Mapbox Static Images API URL
+      // Format: /styles/v1/{style_id}/static/{overlay}/{lon},{lat},{zoom},{bearing},{pitch}/{width}x{height}
+      // Note: Isochrone overlay would require additional processing (polyline encoding or separate overlay layer)
+      // For now, we show markers. Isochrone can be added as a separate overlay layer if needed.
+      const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/${overlayString}/${lon},${lat},14,0/500x400?access_token=${MAPBOX_TOKEN}`;
+      
+      try {
+        console.log('🗺️  Fetching Mapbox static image for PDF...');
+        const mapResponse = await fetch(mapUrl);
+        
+        // Validate content type
+        const contentType = mapResponse.headers.get('content-type');
+        if (mapResponse.ok && contentType && contentType.startsWith('image/')) {
+          const mapImageBuffer = await mapResponse.arrayBuffer();
+          const mapImageBase64 = Buffer.from(mapImageBuffer).toString('base64');
+          
+          // Add map image to PDF (fit within the box: 115mm width, 75mm height)
+          doc.addImage(`data:image/png;base64,${mapImageBase64}`, 'PNG', 15, mapY + 20, 115, 70);
+          console.log('✅ Map image added to PDF');
+        } else {
+          throw new Error(`Invalid response: ${contentType || mapResponse.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Failed to fetch map image:', error.message);
+        // Add placeholder text if map fails
+        doc.setTextColor(107, 114, 128);
+        doc.setFontSize(9);
+        doc.text('Map unavailable', 72.5, mapY + 55, { align: 'center' });
+        doc.setFontSize(7);
+        doc.text('(Mapbox API error)', 72.5, mapY + 62, { align: 'center' });
+      }
+    } else {
+      // No Mapbox token
+      doc.setTextColor(107, 114, 128);
+      doc.setFontSize(9);
+      doc.text('Map unavailable', 72.5, mapY + 55, { align: 'center' });
+      doc.setFontSize(7);
+      doc.text('(Mapbox token not configured)', 72.5, mapY + 62, { align: 'center' });
+    }
+  } else {
+    // No map data
+    doc.setTextColor(107, 114, 128);
+    doc.setFontSize(9);
+    doc.text('Map data not available', 72.5, mapY + 55, { align: 'center' });
+  }
+  
+  // Map Legend (below map, within the box)
+  // Map image ends at mapY + 20 + 70 = mapY + 90, so legend starts at mapY + 92
+  let legendY = mapY + 92;
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Legend:', 15, legendY);
+  
+  doc.setFontSize(6);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(55, 65, 81);
+  legendY += 4;
+  
+  // Survey Location
+  doc.setFillColor(255, 0, 0);
+  doc.circle(17, legendY - 1, 1, 'F');
+  doc.text('Survey', 20, legendY);
+  
+  // Police Station
+  doc.setFillColor(59, 130, 246);
+  doc.circle(45, legendY - 1, 1, 'F');
+  doc.text('Police', 48, legendY);
+  
+  // Hospital
+  doc.setFillColor(239, 68, 68);
+  doc.circle(70, legendY - 1, 1, 'F');
+  doc.text('Hospital', 73, legendY);
+  
+  // Main Road
+  doc.setFillColor(34, 197, 94);
+  doc.circle(100, legendY - 1, 1, 'F');
+  doc.text('Road', 103, legendY);
   
   // RIGHT COLUMN: Development Score
   let rightColY = 54;

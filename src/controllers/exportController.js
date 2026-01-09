@@ -131,22 +131,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const poiCardHeight = 95;
   drawCard(doc, margin, contentY, leftColWidth, poiCardHeight, 'Nearby Points of Interest', [220, 38, 38]);
 
-  // Debug: Log POI data
-  console.log('📊 POI Breakdown for PDF:', JSON.stringify(result.poi_breakdown, null, 2));
-  console.log('📊 Total POIs:', result.total_pois);
-
   // Get POI data - handle both array and empty cases
   const poiBreakdown = Array.isArray(result.poi_breakdown) ? result.poi_breakdown.slice(0, 10) : [];
   const totalPois = poiBreakdown.reduce((sum, p) => sum + (p.count || 0), 0) || 1;
 
-  console.log('📊 POI Breakdown length:', poiBreakdown.length);
-  console.log('📊 Total POIs calculated:', totalPois);
-
-  // Draw Donut Chart
-  const chartCenterX = margin + 40;
+  // Layout: Donut chart on LEFT (1/3), Legend on RIGHT (2/3) - matching website
+  const chartAreaWidth = leftColWidth / 3;  // ~41mm for chart
+  const chartCenterX = margin + chartAreaWidth / 2 + 5;  // Center of left area
   const chartCenterY = contentY + 55;
-  const outerRadius = 25;
-  const innerRadius = 14;
+  const outerRadius = 28;
+  const innerRadius = 16;
 
   if (poiBreakdown.length > 0) {
     // Draw donut segments using pie slices
@@ -155,7 +149,6 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
       const color = COLORS[index % COLORS.length];
       const count = poi.count || 0;
       const sweepAngle = (count / totalPois) * 360;
-      console.log(`  Drawing slice ${index}: ${poi.category}, count=${count}, sweep=${sweepAngle.toFixed(1)}°`);
       if (sweepAngle > 0.5) { // Only draw if angle is significant
         drawPieSlice(doc, chartCenterX, chartCenterY, outerRadius, startAngle, sweepAngle, color);
       }
@@ -165,6 +158,16 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     // Draw center circle (white) to create donut effect
     doc.setFillColor(255, 255, 255);
     doc.circle(chartCenterX, chartCenterY, innerRadius, 'F');
+
+    // Total POIs in center of donut
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(31, 41, 55);
+    doc.text(String(totalPois), chartCenterX, chartCenterY, { align: 'center' });
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(107, 114, 128);
+    doc.text('Total', chartCenterX, chartCenterY + 5, { align: 'center' });
   } else {
     // No POI data - draw placeholder
     doc.setFillColor(229, 231, 235);
@@ -176,66 +179,67 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     doc.text('No data', chartCenterX, chartCenterY + 2, { align: 'center' });
   }
 
-  // POI Legend - Below the donut chart, two columns
-  const legendStartY = contentY + 15;
-  const legendCol1X = margin + 5;
-  const legendCol2X = margin + 65;
+  // POI Legend - ON THE RIGHT side of the card, two columns
+  const legendStartX = margin + chartAreaWidth + 10;  // Start after chart area
+  const legendStartY = contentY + 18;
+  const legendCol1X = legendStartX;
+  const legendCol2X = legendStartX + 42;  // Second column
 
   if (poiBreakdown.length > 0) {
     doc.setFontSize(7);
     const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
 
-    // Left column items
+    // Left column of legend (first half of items)
     poiBreakdown.slice(0, itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 9);
+      const y = legendStartY + (index * 12);
       const color = COLORS[index % COLORS.length];
 
       // Color dot
       doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol1X + 2, y, 2, 'F');
+      doc.circle(legendCol1X + 2, y, 2.5, 'F');
 
       // Count (bold)
-      doc.setTextColor(0, 0, 0);
+      doc.setTextColor(31, 41, 55);
       doc.setFont('helvetica', 'bold');
-      doc.text(String(poi.count || 0), legendCol1X + 7, y + 1);
+      doc.text(String(poi.count || 0), legendCol1X + 8, y + 1);
 
       // Percentage (gray)
-      doc.setTextColor(107, 114, 128);
+      doc.setTextColor(156, 163, 175);
       doc.setFont('helvetica', 'normal');
-      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(2);
+      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(1);
       doc.text(`(${pct}%)`, legendCol1X + 14, y + 1);
 
-      // Category name
+      // Category name on next line
       doc.setTextColor(55, 65, 81);
       const catName = formatCategoryName(poi.category || 'unknown');
-      doc.text(catName.substring(0, 20), legendCol1X + 28, y + 1);
+      doc.text(catName.substring(0, 18), legendCol1X + 8, y + 6);
     });
 
-    // Right column items
+    // Right column of legend (second half of items)
     poiBreakdown.slice(itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 9);
+      const y = legendStartY + (index * 12);
       const colorIndex = itemsPerColumn + index;
       const color = COLORS[colorIndex % COLORS.length];
 
       // Color dot
       doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol2X + 2, y, 2, 'F');
+      doc.circle(legendCol2X + 2, y, 2.5, 'F');
 
       // Count (bold)
-      doc.setTextColor(0, 0, 0);
+      doc.setTextColor(31, 41, 55);
       doc.setFont('helvetica', 'bold');
-      doc.text(String(poi.count || 0), legendCol2X + 7, y + 1);
+      doc.text(String(poi.count || 0), legendCol2X + 8, y + 1);
 
       // Percentage (gray)
-      doc.setTextColor(107, 114, 128);
+      doc.setTextColor(156, 163, 175);
       doc.setFont('helvetica', 'normal');
-      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(2);
+      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(1);
       doc.text(`(${pct}%)`, legendCol2X + 14, y + 1);
 
-      // Category name
+      // Category name on next line
       doc.setTextColor(55, 65, 81);
       const catName = formatCategoryName(poi.category || 'unknown');
-      doc.text(catName.substring(0, 20), legendCol2X + 28, y + 1);
+      doc.text(catName.substring(0, 18), legendCol2X + 8, y + 6);
     });
   } else {
     // No data message

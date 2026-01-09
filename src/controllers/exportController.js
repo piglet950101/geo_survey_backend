@@ -247,71 +247,68 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
     doc.text('No data', chartCenterX, chartCenterY + 2, { align: 'center' });
   }
 
-  // POI Legend - ON THE RIGHT side of the card, two columns
-  const legendStartX = margin + chartAreaWidth + 10;  // Start after chart area
-  const legendStartY = contentY + 18;
+  // POI Legend - ON THE RIGHT side of the card, two columns (matching frontend exactly)
+  const legendStartX = margin + chartAreaWidth + 8;  // Start after chart area
+  const legendStartY = contentY + 16;
   const legendCol1X = legendStartX;
-  const legendCol2X = legendStartX + 42;  // Second column
-
-  console.log('   Legend position: startX=', legendStartX, 'startY=', legendStartY);
-  console.log('   Legend columns: col1X=', legendCol1X, 'col2X=', legendCol2X);
+  const legendCol2X = legendStartX + 45;  // Second column
 
   if (poiBreakdown.length > 0) {
-    doc.setFontSize(7);
     const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
-    console.log('   itemsPerColumn:', itemsPerColumn);
 
     // Left column of legend (first half of items)
     poiBreakdown.slice(0, itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 12);
+      const y = legendStartY + (index * 8);  // Tighter spacing like frontend
       const color = COLORS[index % COLORS.length];
 
       // Color dot
       doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol1X + 2, y, 2.5, 'F');
+      doc.circle(legendCol1X + 2, y, 2, 'F');
 
-      // Count (bold)
-      doc.setTextColor(31, 41, 55);
+      // Format exactly like frontend: "9 (28.13%) retail" on single line
+      const count = poi.count || 0;
+      const pct = poi.percent !== undefined ? poi.percent : ((count / totalPois) * 100).toFixed(2);
+      const category = poi.category || 'unknown';
+
+      // Count (bold black)
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.text(String(poi.count || 0), legendCol1X + 8, y + 1);
+      doc.setTextColor(31, 41, 55);
+      doc.text(String(count), legendCol1X + 6, y + 1);
 
-      // Percentage (gray)
-      doc.setTextColor(156, 163, 175);
+      // Percentage (gray) and category (gray)
       doc.setFont('helvetica', 'normal');
-      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(1);
-      doc.text(`(${pct}%)`, legendCol1X + 14, y + 1);
-
-      // Category name on next line
-      doc.setTextColor(55, 65, 81);
-      const catName = formatCategoryName(poi.category || 'unknown');
-      doc.text(catName.substring(0, 18), legendCol1X + 8, y + 6);
+      doc.setTextColor(107, 114, 128);
+      const countWidth = doc.getTextWidth(String(count));
+      doc.text(`(${pct}%) ${category}`, legendCol1X + 6 + countWidth + 1, y + 1);
     });
 
     // Right column of legend (second half of items)
     poiBreakdown.slice(itemsPerColumn).forEach((poi, index) => {
-      const y = legendStartY + (index * 12);
+      const y = legendStartY + (index * 8);  // Tighter spacing like frontend
       const colorIndex = itemsPerColumn + index;
       const color = COLORS[colorIndex % COLORS.length];
 
       // Color dot
       doc.setFillColor(color[0], color[1], color[2]);
-      doc.circle(legendCol2X + 2, y, 2.5, 'F');
+      doc.circle(legendCol2X + 2, y, 2, 'F');
 
-      // Count (bold)
-      doc.setTextColor(31, 41, 55);
+      // Format exactly like frontend: "9 (28.13%) retail" on single line
+      const count = poi.count || 0;
+      const pct = poi.percent !== undefined ? poi.percent : ((count / totalPois) * 100).toFixed(2);
+      const category = poi.category || 'unknown';
+
+      // Count (bold black)
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.text(String(poi.count || 0), legendCol2X + 8, y + 1);
+      doc.setTextColor(31, 41, 55);
+      doc.text(String(count), legendCol2X + 6, y + 1);
 
-      // Percentage (gray)
-      doc.setTextColor(156, 163, 175);
+      // Percentage (gray) and category (gray)
       doc.setFont('helvetica', 'normal');
-      const pct = poi.percent !== undefined ? poi.percent : ((poi.count / totalPois) * 100).toFixed(1);
-      doc.text(`(${pct}%)`, legendCol2X + 14, y + 1);
-
-      // Category name on next line
-      doc.setTextColor(55, 65, 81);
-      const catName = formatCategoryName(poi.category || 'unknown');
-      doc.text(catName.substring(0, 18), legendCol2X + 8, y + 6);
+      doc.setTextColor(107, 114, 128);
+      const countWidth = doc.getTextWidth(String(count));
+      doc.text(`(${pct}%) ${category}`, legendCol2X + 6 + countWidth + 1, y + 1);
     });
   } else {
     // No data message
@@ -691,54 +688,6 @@ function drawCard(doc, x, y, width, height, title, headerColor) {
 }
 
 /**
- * Draw a pie slice (for donut chart)
- * Uses jsPDF lines() method with proper relative coordinates
- */
-function drawPieSlice(doc, cx, cy, radius, startAngle, sweepAngle, color) {
-  if (sweepAngle <= 0) return;
-
-  doc.setFillColor(color[0], color[1], color[2]);
-
-  // Convert to radians
-  const startRad = (startAngle * Math.PI) / 180;
-  const endRad = ((startAngle + sweepAngle) * Math.PI) / 180;
-
-  // More segments for smoother arc
-  const segments = Math.max(Math.ceil(sweepAngle / 3), 4);
-  const angleIncrement = (endRad - startRad) / segments;
-
-  // Build absolute points: start at center, go to arc, back to center
-  const points = [];
-  points.push([cx, cy]); // Start at center
-
-  // Arc points
-  for (let i = 0; i <= segments; i++) {
-    const angle = startRad + (i * angleIncrement);
-    points.push([
-      cx + radius * Math.cos(angle),
-      cy + radius * Math.sin(angle)
-    ]);
-  }
-
-  // Convert to relative movements for jsPDF lines()
-  const lines = [];
-  for (let i = 1; i < points.length; i++) {
-    lines.push([
-      points[i][0] - points[i - 1][0],
-      points[i][1] - points[i - 1][1]
-    ]);
-  }
-  // Close back to center
-  lines.push([
-    points[0][0] - points[points.length - 1][0],
-    points[0][1] - points[points.length - 1][1]
-  ]);
-
-  // Draw filled polygon - start from center point
-  doc.lines(lines, cx, cy, [1, 1], 'F', true);
-}
-
-/**
  * Draw distance row with icon and values
  */
 function drawDistanceRow(doc, x, y, width, label, distance, bgColor, iconColor) {
@@ -805,13 +754,3 @@ function drawMapPlaceholder(doc, x, y, width, height) {
   doc.text('(Mapbox API error or token not configured)', x + width / 2, y + height / 2 + 8, { align: 'center' });
 }
 
-/**
- * Format category name (convert snake_case to Title Case)
- */
-function formatCategoryName(category) {
-  if (!category) return '';
-  return category
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-}

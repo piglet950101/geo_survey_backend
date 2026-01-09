@@ -135,6 +135,12 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const poiBreakdown = Array.isArray(result.poi_breakdown) ? result.poi_breakdown.slice(0, 10) : [];
   const totalPois = poiBreakdown.reduce((sum, p) => sum + (p.count || 0), 0) || 1;
 
+  console.log('🎯 POI Section Debug:');
+  console.log('   poi_breakdown raw:', result.poi_breakdown);
+  console.log('   poiBreakdown array:', poiBreakdown);
+  console.log('   poiBreakdown.length:', poiBreakdown.length);
+  console.log('   totalPois:', totalPois);
+
   // Layout: Donut chart on LEFT (1/3), Legend on RIGHT (2/3) - matching website
   const chartAreaWidth = leftColWidth / 3;  // ~41mm for chart
   const chartCenterX = margin + chartAreaWidth / 2 + 5;  // Center of left area
@@ -143,14 +149,59 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const innerRadius = 16;
 
   if (poiBreakdown.length > 0) {
-    // Draw donut segments using pie slices
-    let startAngle = -90; // Start from top
+    console.log('   Drawing donut chart at:', chartCenterX, chartCenterY, 'radius:', outerRadius);
+
+    // Draw donut chart using overlapping arcs technique
+    // First draw a full gray background circle
+    doc.setFillColor(229, 231, 235);
+    doc.circle(chartCenterX, chartCenterY, outerRadius, 'F');
+
+    // Draw pie slices by drawing filled wedges
+    let startAngle = -90; // Start from top (12 o'clock position)
     poiBreakdown.forEach((poi, index) => {
       const color = COLORS[index % COLORS.length];
       const count = poi.count || 0;
       const sweepAngle = (count / totalPois) * 360;
-      if (sweepAngle > 0.5) { // Only draw if angle is significant
-        drawPieSlice(doc, chartCenterX, chartCenterY, outerRadius, startAngle, sweepAngle, color);
+      console.log(`   Slice ${index}: ${poi.category}, count=${count}, sweep=${sweepAngle.toFixed(1)}deg`);
+
+      if (sweepAngle > 0.5) {
+        // Draw the pie slice
+        doc.setFillColor(color[0], color[1], color[2]);
+
+        // Convert angles to radians
+        const startRad = (startAngle * Math.PI) / 180;
+        const endRad = ((startAngle + sweepAngle) * Math.PI) / 180;
+
+        // Create path points for the wedge
+        const segments = Math.max(Math.ceil(sweepAngle / 5), 3);
+        const angleStep = (endRad - startRad) / segments;
+
+        // Build lines array (relative coordinates)
+        const lines = [];
+
+        // First line: from center to first arc point
+        const firstX = outerRadius * Math.cos(startRad);
+        const firstY = outerRadius * Math.sin(startRad);
+        lines.push([firstX, firstY]);
+
+        // Arc points (relative to previous point)
+        let prevX = chartCenterX + firstX;
+        let prevY = chartCenterY + firstY;
+
+        for (let i = 1; i <= segments; i++) {
+          const angle = startRad + (i * angleStep);
+          const x = chartCenterX + outerRadius * Math.cos(angle);
+          const y = chartCenterY + outerRadius * Math.sin(angle);
+          lines.push([x - prevX, y - prevY]);
+          prevX = x;
+          prevY = y;
+        }
+
+        // Close back to center
+        lines.push([chartCenterX - prevX, chartCenterY - prevY]);
+
+        // Draw filled polygon starting from center
+        doc.lines(lines, chartCenterX, chartCenterY, [1, 1], 'F', true);
       }
       startAngle += sweepAngle;
     });
@@ -185,9 +236,13 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   const legendCol1X = legendStartX;
   const legendCol2X = legendStartX + 42;  // Second column
 
+  console.log('   Legend position: startX=', legendStartX, 'startY=', legendStartY);
+  console.log('   Legend columns: col1X=', legendCol1X, 'col2X=', legendCol2X);
+
   if (poiBreakdown.length > 0) {
     doc.setFontSize(7);
     const itemsPerColumn = Math.ceil(poiBreakdown.length / 2);
+    console.log('   itemsPerColumn:', itemsPerColumn);
 
     // Left column of legend (first half of items)
     poiBreakdown.slice(0, itemsPerColumn).forEach((poi, index) => {
@@ -620,51 +675,50 @@ function drawCard(doc, x, y, width, height, title, headerColor) {
 
 /**
  * Draw a pie slice (for donut chart)
- * Uses lines() method which is available in jsPDF
+ * Uses jsPDF lines() method with proper relative coordinates
  */
 function drawPieSlice(doc, cx, cy, radius, startAngle, sweepAngle, color) {
   if (sweepAngle <= 0) return;
 
   doc.setFillColor(color[0], color[1], color[2]);
 
-  // Convert angles to radians
+  // Convert to radians
   const startRad = (startAngle * Math.PI) / 180;
   const endRad = ((startAngle + sweepAngle) * Math.PI) / 180;
 
-  // Build path points for the pie slice
-  const steps = Math.max(Math.ceil(sweepAngle / 3), 2);
-  const angleStep = (endRad - startRad) / steps;
+  // More segments for smoother arc
+  const segments = Math.max(Math.ceil(sweepAngle / 3), 4);
+  const angleIncrement = (endRad - startRad) / segments;
 
-  // Start from center
-  const points = [[cx, cy]];
+  // Build absolute points: start at center, go to arc, back to center
+  const points = [];
+  points.push([cx, cy]); // Start at center
 
-  // Add arc points
-  for (let i = 0; i <= steps; i++) {
-    const angle = startRad + (i * angleStep);
+  // Arc points
+  for (let i = 0; i <= segments; i++) {
+    const angle = startRad + (i * angleIncrement);
     points.push([
       cx + radius * Math.cos(angle),
       cy + radius * Math.sin(angle)
     ]);
   }
 
-  // Draw the filled polygon using lines
-  if (points.length > 2) {
-    // Convert to relative coordinates for jsPDF lines() method
-    const linesArray = [];
-    for (let i = 1; i < points.length; i++) {
-      linesArray.push([
-        points[i][0] - points[i-1][0],
-        points[i][1] - points[i-1][1]
-      ]);
-    }
-    // Close the path back to center
-    linesArray.push([
-      points[0][0] - points[points.length-1][0],
-      points[0][1] - points[points.length-1][1]
+  // Convert to relative movements for jsPDF lines()
+  const lines = [];
+  for (let i = 1; i < points.length; i++) {
+    lines.push([
+      points[i][0] - points[i - 1][0],
+      points[i][1] - points[i - 1][1]
     ]);
-
-    doc.lines(linesArray, points[0][0], points[0][1], [1, 1], 'F', true);
   }
+  // Close back to center
+  lines.push([
+    points[0][0] - points[points.length - 1][0],
+    points[0][1] - points[points.length - 1][1]
+  ]);
+
+  // Draw filled polygon - start from center point
+  doc.lines(lines, cx, cy, [1, 1], 'F', true);
 }
 
 /**

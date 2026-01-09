@@ -114,13 +114,13 @@ export const exportReportPDF = asyncHandler(async (req, res) => {
   doc.setTextColor(220, 38, 38); // Red color like in image
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('Land Survey & Infrastructure Analysis', 50, margin + 6);
+  doc.text('Land Survey & Infrastructure Analysis', 58, margin + 6);
 
   // Division and Survey Number on same line
   doc.setFontSize(14);
   doc.setTextColor(59, 130, 246); // Blue color
-  doc.text(`Division : ${result.village}`, 50, margin + 13);
-  doc.text(`Survey number : ${result.survey_number}`, 130, margin + 13);
+  doc.text(`Division : ${result.village}`, 58, margin + 13);
+  doc.text(`Survey number : ${result.survey_number}`, 138, margin + 13);
 
   // Main content starts below header
   let contentY = margin + 20;
